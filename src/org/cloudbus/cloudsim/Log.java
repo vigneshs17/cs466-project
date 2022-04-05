@@ -21,7 +21,7 @@ import java.io.OutputStream;
 public class Log {
 
 	/** The Constant LINE_SEPARATOR. */
-	private static final String LINE_SEPARATOR = System.getProperty("line.separator");
+	private static final String LINE_SEPARATOR = System.getProperty("line.separator");  //行分隔符
 
 	/** The output. */
 	private static OutputStream output;

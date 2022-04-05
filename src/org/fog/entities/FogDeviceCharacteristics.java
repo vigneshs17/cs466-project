@@ -125,6 +125,25 @@ public class FogDeviceCharacteristics extends DatacenterCharacteristics{
 		
 	}
 
+	public FogDeviceCharacteristics(String arch, String os, String vmm, List<Host> hostList, double timeZone,
+			 double costPerSec, double costPerMem, double costPerStorage, double costPerBw) {
+		super(arch, os, vmm, hostList, timeZone, costPerSec, costPerMem, costPerStorage, costPerBw);
+		setHostList(hostList);
+		setId(-1);
+		setArchitecture(architecture);
+		setOs(os);
+		setHostList(hostList);
+		setAllocationPolicy(allocationPolicy);
+		setCostPerSecond(costPerSec);
+
+		setTimeZone(0.0);
+
+		setVmm(vmm);
+		setCostPerMem(costPerMem);
+		setCostPerStorage(costPerStorage);
+		setCostPerBw(costPerBw);
+	}
+
 	/**
 	 * Gets the name of a resource.
 	 * 

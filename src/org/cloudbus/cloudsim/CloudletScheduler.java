@@ -110,6 +110,7 @@ public abstract class CloudletScheduler {
 	 */
 	public abstract void cloudletFinish(ResCloudlet rcl);
 
+	public abstract void clear();
 	/**
 	 * Gets the status of a cloudlet.
 	 * 

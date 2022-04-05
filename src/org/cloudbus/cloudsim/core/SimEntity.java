@@ -41,6 +41,8 @@ public abstract class SimEntity implements Cloneable {
 
 	/** The entity's current state. */
 	private int state;
+	
+	
 
 	/**
 	 * Creates a new entity.

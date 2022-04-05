@@ -24,6 +24,11 @@ import org.cloudbus.cloudsim.core.CloudSim;
  * @since CloudSim Toolkit 1.0
  */
 public class Cloudlet {
+	
+	/**
+	 * 用户id，指令长度，文件长度，输出长度，pe数量，cloudlet的id，cloudlet状态
+	 * 完成时间、开始时间等
+	 */
 
 	/**
 	 * The User or Broker ID. It is advisable that broker set this ID with its own ID, so that
@@ -38,7 +43,7 @@ public class Cloudlet {
 
 	/**
 	 * The input file size of this Cloudlet before execution (unit: in byte). in byte = program +
-	 * input data size
+	 * input data size  程序长度+数据长度
 	 */
 	private final long cloudletFileSize;
 
@@ -93,7 +98,9 @@ public class Cloudlet {
 
 	// //////////////////////////////////////////
 	// Below are CONSTANTS attributes
-	/** The Cloudlet has been created and added to the CloudletList object. */
+	/** The Cloudlet has been created and added to the CloudletList object.
+     * 关于cloudlet状态的变量
+	 *  */
 	public static final int CREATED = 0;
 
 	/** The Cloudlet has been assigned to a CloudResource object as planned. */
@@ -134,7 +141,7 @@ public class Cloudlet {
 	/** The accumulated bw cost. */
 	protected double accumulatedBwCost;
 
-	// Utilization
+	// Utilization 获得cup，内存和带宽的利用率
 
 	/** The utilization of cpu model. */
 	private UtilizationModel utilizationModelCpu;
@@ -364,6 +371,13 @@ public class Cloudlet {
 
 	/**
 	 * Internal class that keeps track Cloudlet's movement in different CloudResources.
+     * 字段：
+     * 提交时间
+     * 在资源总运行时间
+     * 占用cpu时间
+     * 价格
+     * 目前完成度
+     * resource的id和name
 	 */
 	public static class Resource {
 
@@ -482,6 +496,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 从提交到运行之间的等待时间
 	 * Gets the waiting time of this cloudlet executed on a resource.
 	 * 
 	 * @return the waiting time
@@ -499,6 +514,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 设置类型和优先权
 	 * Sets the classType or priority of this Cloudlet for scheduling on a resource.
 	 * 
 	 * @param classType classType of this Cloudlet
@@ -577,6 +593,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 已经执行的长度
 	 * Gets the length of this Cloudlet that has been executed so far from the latest CloudResource.
 	 * This method is useful when trying to move this Cloudlet into different CloudResources or to
 	 * cancel it.
@@ -623,6 +640,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 设置目前已经执行的长度
 	 * Sets the length of this Cloudlet that has been executed so far. This method is used by
 	 * ResCloudlet class when an application is decided to cancel or to move this Cloudlet into
 	 * different CloudResources.
@@ -711,6 +729,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 设置运行cloudlet资源
 	 * Sets the resource parameters for which this Cloudlet is going to be executed. <br>
 	 * NOTE: This method <tt>should</tt> be called only by a resource entity, not the user or owner
 	 * of this Cloudlet.
@@ -740,7 +759,7 @@ public class Cloudlet {
 					+ resourceID + ") with cost = $" + cost + "/sec");
 		}
 
-		index++;  // initially, index = -1
+		index++;  // initially, index = -1   //reslist中资源的索引initially, index = -1
 	}
 
 	/**
@@ -806,6 +825,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 设置walltime，和实际执行时间
 	 * Sets this Cloudlet's execution parameters. These parameters are set by the CloudResource
 	 * before departure or sending back to the original Cloudlet's owner.
 	 * 
@@ -864,6 +884,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 以字符串形式返回cloudlet状态
 	 * Gets the status code of this Cloudlet.
 	 * 
 	 * @return the status code of this Cloudlet
@@ -1036,7 +1057,8 @@ public class Cloudlet {
 		return data;
 	}
 
-	/**
+	/**     
+	 * * 某个资源所用的cpu时间
 	 * Gets the total execution time of this Cloudlet in a given CloudResource ID.
 	 * 
 	 * @param resId a CloudResource entity ID
@@ -1054,6 +1076,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 某个资源的价格
 	 * Gets the cost running this Cloudlet in a given CloudResource ID.
 	 * 
 	 * @param resId a CloudResource entity ID
@@ -1070,6 +1093,7 @@ public class Cloudlet {
 	}
 
 	/**
+     * 给定的resource已经执行的cloudlet的长度
 	 * Gets the length of this Cloudlet that has been executed so far in a given CloudResource ID.
 	 * This method is useful when trying to move this Cloudlet into different CloudResources or to
 	 * cancel it.

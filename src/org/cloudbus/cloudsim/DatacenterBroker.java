@@ -9,6 +9,7 @@
 package org.cloudbus.cloudsim;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -185,7 +186,7 @@ public class DatacenterBroker extends SimEntity {
 
 		if (getDatacenterCharacteristicsList().size() == getDatacenterIdsList().size()) {
 			setDatacenterRequestedIdsList(new ArrayList<Integer>());
-			createVmsInDatacenter(getDatacenterIdsList().get(0));
+			createVmsInDatacenter(getDatacenterIdsList());
 		}
 	}
 
@@ -268,6 +269,7 @@ public class DatacenterBroker extends SimEntity {
 	 * @post $none
 	 */
 	protected void processCloudletReturn(SimEvent ev) {
+		System.out.println("等虚拟机去创建。。。。");
 		Cloudlet cloudlet = (Cloudlet) ev.getData();
 		getCloudletReceivedList().add(cloudlet);
 		Log.printLine(CloudSim.clock() + ": " + getName() + ": Cloudlet " + cloudlet.getCloudletId()
@@ -281,6 +283,7 @@ public class DatacenterBroker extends SimEntity {
 			if (getCloudletList().size() > 0 && cloudletsSubmitted == 0) {
 				// all the cloudlets sent finished. It means that some bount
 				// cloudlet is waiting its VM be created
+				System.out.println("等虚拟机去创建。。。。");
 				clearDatacenters();
 				createVmsInDatacenter(0);
 			}
@@ -328,6 +331,33 @@ public class DatacenterBroker extends SimEntity {
 
 		getDatacenterRequestedIdsList().add(datacenterId);
 
+		setVmsRequested(requestedVms);
+		setVmsAcks(0);
+	}
+	
+	protected void createVmsInDatacenter(List<Integer> datacenterId) {
+		// send one vm for one host
+		int limitVms;
+		int requestedVms = 0;
+		int index;//使数据中心中的虚拟机数量等于主机数量
+		for(int id : datacenterId){
+			index=0;
+			String datacenterName = CloudSim.getEntityName(id);
+			Datacenter datacenter = (Datacenter) CloudSim.getEntity(id);
+			limitVms = datacenter.getHostList().size();
+			while(limitVms>index){
+				Vm vm = getVmList().get(requestedVms);
+				if (!getVmsToDatacentersMap().containsKey(vm.getId())) {
+					Log.printLine(CloudSim.clock() + ": " + getName() + ": Trying to Create VM #" + vm.getId()
+					                    + " in " + datacenterName);
+					sendNow(id, CloudSimTags.VM_CREATE_ACK, vm);
+					requestedVms++;
+					index++;
+				}
+				getDatacenterRequestedIdsList().add(id);
+			}
+		}
+		
 		setVmsRequested(requestedVms);
 		setVmsAcks(0);
 	}

@@ -42,7 +42,7 @@ public class Host {
 	private VmScheduler vmScheduler;
 
 	/** The vm list. */
-	private final List<? extends Vm> vmList = new ArrayList<Vm>();
+	private final static List<? extends Vm> vmList = new ArrayList<Vm>();
 
 	/** The pe list. */
 	private List<? extends Pe> peList;
@@ -230,6 +230,8 @@ public class Host {
 		setStorage(getStorage() - vm.getSize());
 		getVmList().add(vm);
 		vm.setHost(this);
+		//System.out.println("vm.getCurrentAllocatedMips :"+vm.getCurrentRequestedMips());
+		//System.out.println(getDatacenter().getName()+" VM#"+getId()+" mips:"+vm.getMips());
 		return true;
 	}
 
@@ -278,7 +280,7 @@ public class Host {
 	/**
 	 * Deallocate all hostList for the VM.
 	 */
-	protected void vmDeallocateAll() {
+	public void vmDeallocateAll() {
 		getRamProvisioner().deallocateRamForAllVms();
 		getBwProvisioner().deallocateBwForAllVms();
 		getVmScheduler().deallocatePesForAllVms();
@@ -526,7 +528,7 @@ public class Host {
 	 * @return the vm list
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Vm> List<T> getVmList() {
+	public static <T extends Vm> List<T> getVmList() {
 		return (List<T>) vmList;
 	}
 

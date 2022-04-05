@@ -354,6 +354,12 @@ public class ResCloudlet {
 		cloudlet.setExecParam(wallClockTime, actualCPUTime);
 	}
 
+	
+	public void setSubmissionTime(final double clockTime){
+		cloudlet.setSubmissionTime(clockTime);
+	}
+	
+	
 	/**
 	 * Sets the machine and Pe (Processing Element) ID.
 	 * 
@@ -469,6 +475,11 @@ public class ResCloudlet {
 		cloudlet.setCloudletFinishedSoFar(finished);
 	}
 
+	
+	public void setCloudletFinishedSoFar(long finished) {
+		cloudlet.setCloudletFinishedSoFar(finished);
+	}
+	
 	/**
 	 * A method that updates the length of cloudlet that has been completed.
 	 * 

@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.cloudbus.cloudsim.core.CloudSim;
-import org.fog.entities.Tuple;
 
 /**
  * CloudletSchedulerDynamicWorkload implements a policy of scheduling performed by a virtual machine
@@ -80,7 +79,7 @@ public class CloudletSchedulerDynamicWorkload extends CloudletSchedulerTimeShare
 					* getTotalCurrentAllocatedMipsForCloudlet(rcl, getPreviousTime()) * Consts.MILLION));
 			
 			if (rcl.getRemainingCloudletLength() == 0) { // finished: remove from the list
-				System.out.println("Tuple "+((Tuple)rcl.getCloudlet()).getActualTupleId()+" is finished at time "+CloudSim.clock());
+				//System.out.println("Tuple "+((Tuple)rcl.getCloudlet()).getActualTupleId()+" is finished at time "+CloudSim.clock());
 				cloudletsToFinish.add(rcl);
 				continue;
 			} else { // not finish: estimate the finish time

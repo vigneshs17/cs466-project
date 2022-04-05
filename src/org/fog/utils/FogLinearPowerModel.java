@@ -28,6 +28,9 @@ public class FogLinearPowerModel implements PowerModel {
 
 	/** The static power. */
 	private double staticPower;
+	
+	private double sendPower;
+	private double recePower;
 
 	/**
 	 * Instantiates a new linear power model.
@@ -36,6 +39,8 @@ public class FogLinearPowerModel implements PowerModel {
 	 * @param staticPower the static power
 	 */
 	public FogLinearPowerModel(double maxPower, double staticPower) {
+		sendPower = 100;
+		recePower = 25;
 		setMaxPower(maxPower);
 		setStaticPower(staticPower);
 		setConstant((maxPower - getStaticPower()) / 100);
@@ -58,7 +63,7 @@ public class FogLinearPowerModel implements PowerModel {
 	 * 
 	 * @return the max power
 	 */
-	protected double getMaxPower() {
+	public double getMaxPower() {
 		return maxPower;
 	}
 
@@ -94,8 +99,15 @@ public class FogLinearPowerModel implements PowerModel {
 	 * 
 	 * @return the static power
 	 */
-	protected double getStaticPower() {
+	public double getStaticPower() {
 		return staticPower;
+	}
+	
+	public double getSendPower() {
+		return sendPower;
+	}
+	public double getRecePower() {
+		return recePower;
 	}
 
 	/**

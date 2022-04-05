@@ -60,7 +60,7 @@ public class HostDynamicWorkload extends Host {
 	 * (non-Javadoc)
 	 * @see cloudsim.Host#updateVmsProcessing(double)
 	 */
-	@Override
+	/*@Override
 	public double updateVmsProcessing(double currentTime) {
 		double smallerTime = super.updateVmsProcessing(currentTime);
 		setPreviousUtilizationMips(getUtilizationMips());
@@ -79,6 +79,7 @@ public class HostDynamicWorkload extends Host {
 			double totalRequestedMips = vm.getCurrentRequestedTotalMips();
 			double totalAllocatedMips = getVmScheduler().getTotalAllocatedMipsForVm(vm);
 
+			//Log.disable();
 			if (!Log.isDisabled()) {
 				Log.formatLine(
 						"%.2f: [Host #" + getId() + "] Total allocated MIPS for VM #" + vm.getId()
@@ -135,9 +136,10 @@ public class HostDynamicWorkload extends Host {
 				getUtilizationMips(),
 				hostTotalRequestedMips,
 				(getUtilizationMips() > 0));
+		Log.enable();
 
 		return smallerTime;
-	}
+	}*/
 
 	/**
 	 * Gets the completed vms.

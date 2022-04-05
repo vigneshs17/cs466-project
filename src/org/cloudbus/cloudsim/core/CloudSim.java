@@ -17,7 +17,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.Vm;
 import org.cloudbus.cloudsim.core.predicates.Predicate;
 import org.cloudbus.cloudsim.core.predicates.PredicateAny;
 import org.cloudbus.cloudsim.core.predicates.PredicateNone;
@@ -222,7 +224,7 @@ public class CloudSim {
 					+ "Error - can't stop Cloud Simulation.");
 		}
 	}
-
+	
 	/**
 	 * This method is called if one wants to terminate the simulation.
 	 * 
@@ -317,7 +319,7 @@ public class CloudSim {
 	protected static DeferredQueue deferred;
 
 	/** The simulation clock. */
-	private static double clock;
+	public  static double clock;
 
 	/** Flag for checking if the simulation is running. */
 	private static boolean running;
@@ -478,8 +480,6 @@ public class CloudSim {
 			future.addEvent(evt);
 		}
 		if (e.getId() == -1) { // Only add once!
-			
-			//System.out.println("From CloudSim.addEntity(): Adding SimEntity "+e.getName());
 			int id = entities.size();
 			e.setId(id);
 			entities.add(e);
@@ -814,7 +814,6 @@ public class CloudSim {
 		running = true;
 		// Start all the entities
 		for (SimEntity ent : entities) {
-			//System.out.println("From CloudSim.runStart(): Starting SimEntity "+ent.getName());
 			ent.startEntity();
 		}
 
@@ -907,6 +906,9 @@ public class CloudSim {
 					e.printStackTrace();
 				}
 			}
+			
+			//if(Host.getVmList().isEmpty())
+			//	break;
 		}
 
 		double clock = clock();
@@ -917,6 +919,19 @@ public class CloudSim {
 		return clock;
 	}
 
+	public static double run(List<Vm> vmlist) {
+			if(vmlist.isEmpty())
+
+		{double clock = clock();
+
+		finishSimulation();
+		runStop();
+
+		return clock;
+		}
+			return 0;
+	}
+	
 	/**
 	 * Internal method that allows the entities to terminate. This method should <b>not</b> be used
 	 * in user simulations.
@@ -975,4 +990,9 @@ public class CloudSim {
 		return paused;
 	}
 
+	public static void clearEvent(){
+		future.clear();
+		deferred.clear();
+	}
+	
 }

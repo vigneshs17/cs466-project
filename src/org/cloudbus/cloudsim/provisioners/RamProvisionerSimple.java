@@ -43,7 +43,6 @@ public class RamProvisionerSimple extends RamProvisioner {
 	@Override
 	public boolean allocateRamForVm(Vm vm, int ram) {
 		int maxRam = vm.getRam();
-
 		if (ram >= maxRam) {
 			ram = maxRam;
 		}

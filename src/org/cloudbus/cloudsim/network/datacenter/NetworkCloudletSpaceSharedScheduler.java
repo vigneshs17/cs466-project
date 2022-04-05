@@ -794,4 +794,10 @@ public class NetworkCloudletSpaceSharedScheduler extends CloudletScheduler {
 		return 0;
 	}
 
+	@Override
+	public void clear() {
+		// TODO Auto-generated method stub
+		
+	}
+
 }

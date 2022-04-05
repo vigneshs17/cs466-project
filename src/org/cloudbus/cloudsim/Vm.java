@@ -12,6 +12,8 @@ import java.util.LinkedList;
 import java.util.List;
 
 /**
+ * vm类表示一个虚拟机，在主机内运行，与其他虚拟机共享主机，每个vm有一个owner，owner可以提交cloudlet，vm会处理提交的cloudlet
+ * 主要方法是对每个cloudlet进行更新
  * Vm represents a VM: it runs inside a Host, sharing hostList with other VMs. It processes
  * cloudlets. This processing happens according to a policy, defined by the CloudletScheduler. Each
  * VM has a owner, which can submit cloudlets to the VM to be executed
@@ -22,6 +24,12 @@ import java.util.List;
  */
 public class Vm {
 
+	/**
+	 * 参数：
+	 * id, 用户id，硬盘 大小（size），处理能力，pe的个数， 内存， 带宽， vmm, 调度策略
+	 * 主机，是否迁移，已分配大小、处理能力、内外存、带宽,是否是最近创建
+	 */
+	
 	/** The id. */
 	private int id;
 
@@ -34,7 +42,7 @@ public class Vm {
 	/** The size. */
 	private long size;
 
-	/** The MIPS. */
+	/** The MIPS. 处理能力*/
 	private double mips;
 
 	/** The number of PEs. */

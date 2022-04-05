@@ -7,6 +7,8 @@ import java.util.List;
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.Pe;
 import org.cloudbus.cloudsim.Storage;
+import org.cloudbus.cloudsim.VmAllocationPolicySimple;
+import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 import org.cloudbus.cloudsim.power.PowerHost;
 import org.cloudbus.cloudsim.power.models.PowerModelLinear;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
@@ -14,8 +16,6 @@ import org.cloudbus.cloudsim.sdn.overbooking.BwProvisionerOverbooking;
 import org.cloudbus.cloudsim.sdn.overbooking.PeProvisionerOverbooking;
 import org.fog.entities.FogDevice;
 import org.fog.entities.FogDeviceCharacteristics;
-import org.fog.policy.AppModuleAllocationPolicy;
-import org.fog.scheduler.StreamOperatorScheduler;
 
 public class FogEntityFactory {
 
@@ -28,14 +28,16 @@ public class FogEntityFactory {
 		int ram = 2048; // host memory (MB)
 		long storage = 1000000; // host storage
 		int bw = 10000;
+		double costPerMips = 0.1;
 
 		PowerHost host = new PowerHost(
 				hostId,
+				costPerMips,
 				new RamProvisionerSimple(ram),
 				new BwProvisionerOverbooking(bw),
 				storage,
 				peList,
-				new StreamOperatorScheduler(peList),
+				new VmSchedulerTimeShared(peList),
 				new PowerModelLinear(100, 40)
 			);
 
@@ -61,7 +63,7 @@ public class FogEntityFactory {
 		FogDevice fogdevice = null;
 		try {
 			fogdevice = new FogDevice(name, characteristics, 
-					new AppModuleAllocationPolicy(hostList), storageList, 10, uplinkBandwidth, downlinkBandwidth, latency, ratePerMips);
+					new VmAllocationPolicySimple(hostList), storageList, 10, uplinkBandwidth, downlinkBandwidth, latency, ratePerMips);
 		} catch (Exception e) {
 			e.printStackTrace();
 		}

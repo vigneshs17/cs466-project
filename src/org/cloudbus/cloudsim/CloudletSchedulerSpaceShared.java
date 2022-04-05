@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.cloudbus.cloudsim.core.CloudSim;
+import org.workflowsim.WorkflowEngine;
 
 /**
  * CloudletSchedulerSpaceShared implements a policy of scheduling performed by a virtual machine. It
@@ -43,6 +44,8 @@ public class CloudletSchedulerSpaceShared extends CloudletScheduler {
 
 	/** The used PEs. */
 	protected int usedPes;
+	
+	public static List<? extends ResCloudlet> cloudlets=new ArrayList<ResCloudlet>();
 
 	/**
 	 * Creates a new CloudletSchedulerSpaceShared object. This method must be invoked before
@@ -110,6 +113,7 @@ public class CloudletSchedulerSpaceShared extends CloudletScheduler {
 			}
 		}
 		getCloudletExecList().removeAll(toRemove);
+		cloudlets.addAll(getCloudletFinishedList());
 
 		// for each finished cloudlet, add a new one from the waiting list
 		if (!getCloudletWaitingList().isEmpty()) {
@@ -147,6 +151,26 @@ public class CloudletSchedulerSpaceShared extends CloudletScheduler {
 		return nextEvent;
 	}
 
+	public void clear() {
+		for (ResCloudlet rcl : cloudlets) {
+			// finished anyway, rounding issue...
+			rcl.setCloudletFinishedSoFar(0);
+			rcl.updateCloudletFinishedSoFar(0);
+			rcl.setCloudletStatus(Cloudlet.CREATED);
+			rcl.setExecParam(0, 0);
+			rcl.setSubmissionTime(0);
+			//rcl.init2();
+			/*rcl.setExecParam(CloudSim.clock(), 0.0);
+			rcl.setSubmissionTime(0.0);*/
+		}
+		usedPes=0;
+		currentCpus=0;
+		getCloudletFinishedList().removeAll(cloudlets);
+		getCloudletWaitingList().removeAll(getCloudletWaitingList());
+		cloudlets.removeAll(cloudlets);
+		
+	}
+	
 	/**
 	 * Cancels execution of a cloudlet.
 	 * 
@@ -392,10 +416,14 @@ public class CloudletSchedulerSpaceShared extends CloudletScheduler {
 
 		// use the current capacity to estimate the extra amount of
 		// time to file transferring. It must be added to the cloudlet length
+		
 		double extraSize = capacity * fileTransferTime;
 		long length = cloudlet.getCloudletLength();
-		length += extraSize;
+		if(WorkflowEngine.already==0) {
+			length += extraSize;
+		}
 		cloudlet.setCloudletLength(length);
+		//System.out.println("cloudlet#"+cloudlet.getCloudletId()+".getCloudletLength()="+cloudlet.getCloudletLength());
 		return cloudlet.getCloudletLength() / capacity;
 	}
 

@@ -1,7 +1,21 @@
 package org.fog.entities;
 
-import org.apache.commons.math3.util.Pair;
-import org.cloudbus.cloudsim.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.CloudletScheduler;
+import org.cloudbus.cloudsim.Consts;
+import org.cloudbus.cloudsim.Host;
+import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.Storage;
+import org.cloudbus.cloudsim.Vm;
+import org.cloudbus.cloudsim.VmAllocationPolicy;
+import org.cloudbus.cloudsim.VmAllocationPolicySimple;
+import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.CloudSimTags;
 import org.cloudbus.cloudsim.core.SimEvent;
@@ -11,479 +25,293 @@ import org.cloudbus.cloudsim.power.models.PowerModel;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
 import org.cloudbus.cloudsim.sdn.overbooking.BwProvisionerOverbooking;
 import org.cloudbus.cloudsim.sdn.overbooking.PeProvisionerOverbooking;
-import org.fog.application.AppEdge;
-import org.fog.application.AppLoop;
-import org.fog.application.AppModule;
-import org.fog.application.Application;
-import org.fog.mobilitydata.Clustering;
-import org.fog.policy.AppModuleAllocationPolicy;
-import org.fog.scheduler.StreamOperatorScheduler;
-import org.fog.utils.*;
-import org.json.simple.JSONObject;
-
-import java.util.*;
+import org.fog.utils.Config;
+import org.fog.utils.FogEvents;
+import org.fog.utils.FogUtils;
+import org.workflowsim.CondorVM;
+import org.workflowsim.FileItem;
+import org.workflowsim.Job;
+import org.workflowsim.Task;
+import org.workflowsim.utils.Parameters;
+import org.workflowsim.utils.Parameters.ClassType;
+import org.workflowsim.utils.Parameters.FileType;
+import org.workflowsim.utils.ReplicaCatalog;
 
 public class FogDevice extends PowerDatacenter {
-    protected Queue<Tuple> northTupleQueue;
-    protected Queue<Pair<Tuple, Integer>> southTupleQueue;
+	
+	protected double lockTime;
+	
+	/**	
+	 * ID of the parent Fog Device
+	 */
+	protected int parentId;
+	
+	/**
+	 * ID of the Controller
+	 */
+	protected int controllerId;
+	/**
+	 * IDs of the children Fog devices
+	 */
+	protected List<Integer> childrenIds;
+	
+	protected double uplinkBandwidth;
+	protected double downlinkBandwidth;
+	protected double uplinkLatency;
+	
+	protected double energyConsumption;
+	protected double lastUtilizationUpdateTime;
+	protected double lastUtilization;
+	
+	public double ExecutionTime;
+	private int level;
+	
+	/**
+	 * the cost of the computing resource
+	 */
+	protected double ratePerMips;
+	
+	protected double totalCost;
+	
+	public FogDevice(
+			String name, 
+			FogDeviceCharacteristics characteristics,
+			VmAllocationPolicy vmAllocationPolicy,
+			List<Storage> storageList,
+			double schedulingInterval,
+			double uplinkBandwidth, double downlinkBandwidth, double uplinkLatency, double ratePerMips) throws Exception {
+		super(name, characteristics, vmAllocationPolicy, storageList, schedulingInterval);
+		setCharacteristics(characteristics);
+		setVmAllocationPolicy(vmAllocationPolicy);
+		setLastProcessTime(0.0);
+		setStorageList(storageList);
+		setVmList(new ArrayList<Vm>());
+		setSchedulingInterval(schedulingInterval);
+		setUplinkBandwidth(uplinkBandwidth);
+		setDownlinkBandwidth(downlinkBandwidth);
+		setUplinkLatency(uplinkLatency);
+		setRatePerMips(ratePerMips);
+		for (Host host : getCharacteristics().getHostList()) {
+			host.setDatacenter(this);
+		}
+		// If this resource doesn't have any PEs then no useful at all
+		if (getCharacteristics().getNumberOfPes() == 0) {
+			throw new Exception(super.getName()
+					+ " : Error - this entity has no PEs. Therefore, can't process any Cloudlets.");
+		}
+		// stores id of this class
+		getCharacteristics().setId(super.getId());
+		
+		setChildrenIds(new ArrayList<Integer>());
+		
+		this.lockTime = 0;
+		this.lastUtilization = 0;
+		setEnergyConsumption(0.0);
+		setExecutionTime(0.0);
+		setTotalCost(0);
+	}
 
-    protected List<String> activeApplications;
+	public FogDevice(
+			String name, long mips, int ram, 
+			double uplinkBandwidth, double downlinkBandwidth, double ratePerMips, PowerModel powerModel) throws Exception {
+		super(name, null, null, new LinkedList<Storage>(), 0);
+		
+		List<Pe> peList = new ArrayList<Pe>();
 
-    protected Map<String, Application> applicationMap;
-    protected Map<String, List<String>> appToModulesMap;
-    protected Map<Integer, Double> childToLatencyMap;
+		// 3. Create PEs and add these into a list.
+		peList.add(new Pe(0, new PeProvisionerOverbooking(mips))); // need to store Pe id and MIPS Rating
 
+		int hostId = FogUtils.generateEntityId();
+		long storage = 1000000; // host storage
+		int bw = 10000;
+		double costPerMips = 0.1;
 
-    protected Map<Integer, Integer> cloudTrafficMap;
+		PowerHost host = new PowerHost(
+				hostId,
+				costPerMips,
+				new RamProvisionerSimple(ram),
+				new BwProvisionerOverbooking(bw),
+				storage,
+				peList,
+				new VmSchedulerTimeShared(peList),
+				powerModel
+			);
 
-    protected double lockTime;
+		List<Host> hostList = new ArrayList<Host>();
+		hostList.add(host);
 
-    /**
-     * ID of the parent Fog Device
-     */
-    protected int parentId;
+		setVmAllocationPolicy(new VmAllocationPolicySimple(hostList));
+		
+		String arch = Config.FOG_DEVICE_ARCH; 
+		String os = Config.FOG_DEVICE_OS; 
+		String vmm = Config.FOG_DEVICE_VMM;
+		double time_zone = Config.FOG_DEVICE_TIMEZONE;
+		double cost = Config.FOG_DEVICE_COST; 
+		double costPerMem = Config.FOG_DEVICE_COST_PER_MEMORY;
+		double costPerStorage = Config.FOG_DEVICE_COST_PER_STORAGE;
+		double costPerBw = Config.FOG_DEVICE_COST_PER_BW;
 
-    /**
-     * ID of the Controller
-     */
-    protected int controllerId;
-    /**
-     * IDs of the children Fog devices
-     */
-    protected List<Integer> childrenIds;
+		FogDeviceCharacteristics characteristics = new FogDeviceCharacteristics(
+				arch, os, vmm, host, time_zone, cost, costPerMem,
+				costPerStorage, costPerBw);
 
-    protected Map<Integer, List<String>> childToOperatorsMap;
-
-    /**
-     * Flag denoting whether the link southwards from this FogDevice is busy
-     */
-    protected boolean isSouthLinkBusy;
-
-    /**
-     * Flag denoting whether the link northwards from this FogDevice is busy
-     */
-    protected boolean isNorthLinkBusy;
-
-    protected double uplinkBandwidth;
-    protected double downlinkBandwidth;
-    protected double uplinkLatency;
-    protected List<Pair<Integer, Double>> associatedActuatorIds;
-
-    protected double energyConsumption;
-    protected double lastUtilizationUpdateTime;
-    protected double lastUtilization;
-    private int level;
-
-    protected double ratePerMips;
-
-    protected double totalCost;
-
-    protected Map<String, Map<String, Integer>> moduleInstanceCount;
-
-    protected List<Integer> clusterMembers = new ArrayList<Integer>();
-    protected boolean isInCluster = false;
-    protected boolean selfCluster = false; // IF there is only one fog device in one cluster without any sibling
-    protected Map<Integer, Double> clusterMembersToLatencyMap; // latency to other cluster members
-
-    protected Queue<Pair<Tuple, Integer>> clusterTupleQueue;// tuple and destination cluster device ID
-    protected boolean isClusterLinkBusy; //Flag denoting whether the link connecting to cluster from this FogDevice is busy
-    protected double clusterLinkBandwidth;
-
-
-    public FogDevice(
-            String name,
-            FogDeviceCharacteristics characteristics,
-            VmAllocationPolicy vmAllocationPolicy,
-            List<Storage> storageList,
-            double schedulingInterval,
-            double uplinkBandwidth, double downlinkBandwidth, double uplinkLatency, double ratePerMips) throws Exception {
-        super(name, characteristics, vmAllocationPolicy, storageList, schedulingInterval);
-        setCharacteristics(characteristics);
-        setVmAllocationPolicy(vmAllocationPolicy);
-        setLastProcessTime(0.0);
-        setStorageList(storageList);
-        setVmList(new ArrayList<Vm>());
-        setSchedulingInterval(schedulingInterval);
-        setUplinkBandwidth(uplinkBandwidth);
-        setDownlinkBandwidth(downlinkBandwidth);
-        setUplinkLatency(uplinkLatency);
-        setRatePerMips(ratePerMips);
-        setAssociatedActuatorIds(new ArrayList<Pair<Integer, Double>>());
-        for (Host host : getCharacteristics().getHostList()) {
-            host.setDatacenter(this);
-        }
-        setActiveApplications(new ArrayList<String>());
-        // If this resource doesn't have any PEs then no useful at all
-        if (getCharacteristics().getNumberOfPes() == 0) {
-            throw new Exception(super.getName()
-                    + " : Error - this entity has no PEs. Therefore, can't process any Cloudlets.");
-        }
-        // stores id of this class
-        getCharacteristics().setId(super.getId());
-
-        applicationMap = new HashMap<String, Application>();
-        appToModulesMap = new HashMap<String, List<String>>();
-        northTupleQueue = new LinkedList<Tuple>();
-        southTupleQueue = new LinkedList<Pair<Tuple, Integer>>();
-        setNorthLinkBusy(false);
-        setSouthLinkBusy(false);
-
-
-        setChildrenIds(new ArrayList<Integer>());
-        setChildToOperatorsMap(new HashMap<Integer, List<String>>());
-
-        this.cloudTrafficMap = new HashMap<Integer, Integer>();
-
-        this.lockTime = 0;
-
-        this.energyConsumption = 0;
-        this.lastUtilization = 0;
-        setTotalCost(0);
-        setModuleInstanceCount(new HashMap<String, Map<String, Integer>>());
-        setChildToLatencyMap(new HashMap<Integer, Double>());
-
-        clusterTupleQueue = new LinkedList<>();
-        setClusterLinkBusy(false);
-
-    }
-
-    public FogDevice(
-            String name, long mips, int ram,
-            double uplinkBandwidth, double downlinkBandwidth, double ratePerMips, PowerModel powerModel) throws Exception {
-        super(name, null, null, new LinkedList<Storage>(), 0);
-
-        List<Pe> peList = new ArrayList<Pe>();
-
-        // 3. Create PEs and add these into a list.
-        peList.add(new Pe(0, new PeProvisionerOverbooking(mips))); // need to store Pe id and MIPS Rating
-
-        int hostId = FogUtils.generateEntityId();
-        long storage = 1000000; // host storage
-        int bw = 10000;
-
-        PowerHost host = new PowerHost(
-                hostId,
-                new RamProvisionerSimple(ram),
-                new BwProvisionerOverbooking(bw),
-                storage,
-                peList,
-                new StreamOperatorScheduler(peList),
-                powerModel
-        );
-
-        List<Host> hostList = new ArrayList<Host>();
-        hostList.add(host);
-
-        setVmAllocationPolicy(new AppModuleAllocationPolicy(hostList));
-
-        String arch = Config.FOG_DEVICE_ARCH;
-        String os = Config.FOG_DEVICE_OS;
-        String vmm = Config.FOG_DEVICE_VMM;
-        double time_zone = Config.FOG_DEVICE_TIMEZONE;
-        double cost = Config.FOG_DEVICE_COST;
-        double costPerMem = Config.FOG_DEVICE_COST_PER_MEMORY;
-        double costPerStorage = Config.FOG_DEVICE_COST_PER_STORAGE;
-        double costPerBw = Config.FOG_DEVICE_COST_PER_BW;
-
-        FogDeviceCharacteristics characteristics = new FogDeviceCharacteristics(
-                arch, os, vmm, host, time_zone, cost, costPerMem,
-                costPerStorage, costPerBw);
-
-        setCharacteristics(characteristics);
-
-        setLastProcessTime(0.0);
-        setVmList(new ArrayList<Vm>());
-        setUplinkBandwidth(uplinkBandwidth);
-        setDownlinkBandwidth(downlinkBandwidth);
-        setUplinkLatency(uplinkLatency);
-        setAssociatedActuatorIds(new ArrayList<Pair<Integer, Double>>());
-        for (Host host1 : getCharacteristics().getHostList()) {
-            host1.setDatacenter(this);
-        }
-        setActiveApplications(new ArrayList<String>());
-        if (getCharacteristics().getNumberOfPes() == 0) {
-            throw new Exception(super.getName()
-                    + " : Error - this entity has no PEs. Therefore, can't process any Cloudlets.");
-        }
-
-
-        getCharacteristics().setId(super.getId());
-
-        applicationMap = new HashMap<String, Application>();
-        appToModulesMap = new HashMap<String, List<String>>();
-        northTupleQueue = new LinkedList<Tuple>();
-        southTupleQueue = new LinkedList<Pair<Tuple, Integer>>();
-        setNorthLinkBusy(false);
-        setSouthLinkBusy(false);
-
-
-        setChildrenIds(new ArrayList<Integer>());
-        setChildToOperatorsMap(new HashMap<Integer, List<String>>());
-
-        this.cloudTrafficMap = new HashMap<Integer, Integer>();
-
-        this.lockTime = 0;
-
-        this.energyConsumption = 0;
-        this.lastUtilization = 0;
-        setTotalCost(0);
-        setChildToLatencyMap(new HashMap<Integer, Double>());
-        setModuleInstanceCount(new HashMap<String, Map<String, Integer>>());
-
-        clusterTupleQueue = new LinkedList<>();
-        setClusterLinkBusy(false);
-    }
-
-    /**
-     * Overrides this method when making a new and different type of resource. <br>
-     * <b>NOTE:</b> You do not need to override {@link #body()} method, if you use this method.
-     *
-     * @pre $none
-     * @post $none
-     */
-    protected void registerOtherEntity() {
-
-    }
-
+		setCharacteristics(characteristics);
+		
+		setLastProcessTime(0.0);
+		setVmList(new ArrayList<Vm>());
+		setUplinkBandwidth(uplinkBandwidth);
+		setDownlinkBandwidth(downlinkBandwidth);
+		setUplinkLatency(uplinkLatency);
+		for (Host host1 : getCharacteristics().getHostList()) {
+			host1.setDatacenter(this);
+		}
+		if (getCharacteristics().getNumberOfPes() == 0) {
+			throw new Exception(super.getName()
+					+ " : Error - this entity has no PEs. Therefore, can't process any Cloudlets.");
+		}
+		
+		getCharacteristics().setId(super.getId());
+		setChildrenIds(new ArrayList<Integer>());
+		
+		this.lockTime = 0;
+		this.lastUtilization = 0;
+		setEnergyConsumption(0.0);
+		setExecutionTime(0.0);
+		setTotalCost(0);
+	}
+	
+	/**
+	 * Overrides this method when making a new and different type of resource. <br>
+	 * <b>NOTE:</b> You do not need to override {@link #body()} method, if you use this method.
+	 * 
+	 * @pre $none
+	 * @post $none
+	 */
+	protected void registerOtherEntity() {
+		
+	}
+	@Override
+	protected void processOtherEvent(SimEvent ev) {
+		switch(ev.getTag()){
+		case FogEvents.RELEASE_OPERATOR:
+			processOperatorRelease(ev);
+			break;
+		case FogEvents.RESOURCE_MGMT:
+			manageResources(ev);
+		default:
+			break;
+		}
+	}
+	
+	/**
+	 * Perform miscellaneous resource management tasks
+	 * @param ev
+	 */
+	private void manageResources(SimEvent ev) {
+		//updateEnergyConsumption();
+		//send(getId(), Config.RESOURCE_MGMT_INTERVAL, FogEvents.RESOURCE_MGMT);
+	}
+	
+	
     @Override
-    protected void processOtherEvent(SimEvent ev) {
-        switch (ev.getTag()) {
-            case FogEvents.TUPLE_ARRIVAL:
-                processTupleArrival(ev);
-                break;
-            case FogEvents.LAUNCH_MODULE:
-                processModuleArrival(ev);
-                break;
-            case FogEvents.RELEASE_OPERATOR:
-                processOperatorRelease(ev);
-                break;
-            case FogEvents.SENSOR_JOINED:
-                processSensorJoining(ev);
-                break;
-            case FogEvents.SEND_PERIODIC_TUPLE:
-                sendPeriodicTuple(ev);
-                break;
-            case FogEvents.APP_SUBMIT:
-                processAppSubmit(ev);
-                break;
-            case FogEvents.UPDATE_NORTH_TUPLE_QUEUE:
-                updateNorthTupleQueue();
-                break;
-            case FogEvents.UPDATE_SOUTH_TUPLE_QUEUE:
-                updateSouthTupleQueue();
-                break;
-            case FogEvents.ACTIVE_APP_UPDATE:
-                updateActiveApplications(ev);
-                break;
-            case FogEvents.ACTUATOR_JOINED:
-                processActuatorJoined(ev);
-                break;
-            case FogEvents.LAUNCH_MODULE_INSTANCE:
-                updateModuleInstanceCount(ev);
-                break;
-            case FogEvents.MODULE_SEND:
-                moduleSend(ev);
-                break;
-            case FogEvents.MODULE_RECEIVE:
-                moduleReceive(ev);
-                break;
-            case FogEvents.RELEASE_MODULE:
-                processModuleTermination(ev);
-                break;
-            case FogEvents.RESOURCE_MGMT:
-                manageResources(ev);
-                break;
-            case FogEvents.UPDATE_CLUSTER_TUPLE_QUEUE:
-                updateClusterTupleQueue();
-                break;
-            case FogEvents.START_DYNAMIC_CLUSTERING:
-                //This message is received by the devices to start their clustering
-                processClustering(this.getParentId(), this.getId(), ev);
-                break;
-            default:
-                break;
-        }
-    }
-
-    protected void moduleSend(SimEvent ev) {
-        // TODO Auto-generated method stub
-        JSONObject object = (JSONObject) ev.getData();
-        AppModule appModule = (AppModule) object.get("module");
-        System.out.println(getName() + " is sending " + appModule.getName());
-        NetworkUsageMonitor.sendingModule((double) object.get("delay"), appModule.getSize());
-        MigrationDelayMonitor.setMigrationDelay((double) object.get("delay"));
-
-
-        sendNow(getId(), FogEvents.RELEASE_MODULE, appModule);
-
-
-    }
-
-    protected void moduleReceive(SimEvent ev) {
-        // TODO Auto-generated method stub
-        JSONObject object = (JSONObject) ev.getData();
-        AppModule appModule = (AppModule) object.get("module");
-        Application app = (Application) object.get("application");
-        System.out.println(getName() + " is receiving " + appModule.getName());
-        NetworkUsageMonitor.sendingModule((double) object.get("delay"), appModule.getSize());
-        MigrationDelayMonitor.setMigrationDelay((double) object.get("delay"));
-
-        sendNow(getId(), FogEvents.APP_SUBMIT, app);
-        sendNow(getId(), FogEvents.LAUNCH_MODULE, appModule);
-    }
-
-    /**
-     * Perform miscellaneous resource management tasks
-     *
-     * @param ev
-     */
-    protected void manageResources(SimEvent ev) {
-        updateEnergyConsumption();
-        send(getId(), Config.RESOURCE_MGMT_INTERVAL, FogEvents.RESOURCE_MGMT);
-    }
-
-    /**
-     * Updating the number of modules of an application module on this device
-     *
-     * @param ev instance of SimEvent containing the module and no of instances
-     */
-    protected void updateModuleInstanceCount(SimEvent ev) {
-        ModuleLaunchConfig config = (ModuleLaunchConfig) ev.getData();
-        String appId = config.getModule().getAppId();
-        if (!moduleInstanceCount.containsKey(appId))
-            moduleInstanceCount.put(appId, new HashMap<String, Integer>());
-        moduleInstanceCount.get(appId).put(config.getModule().getName(), config.getInstanceCount());
-        System.out.println(getName() + " Creating " + config.getInstanceCount() + " instances of module " + config.getModule().getName());
-    }
-
-    private AppModule getModuleByName(String moduleName) {
-        AppModule module = null;
-        for (Vm vm : getHost().getVmList()) {
-            if (((AppModule) vm).getName().equals(moduleName)) {
-                module = (AppModule) vm;
-                break;
+    protected void updateCloudletProcessing() {
+        // if some time passed since last processing
+        // R: for term is to allow loop at simulation start. Otherwise, one initial
+        // simulation step is skipped and schedulers are not properly initialized
+        //this is a bug of CloudSim if the runtime is smaller than 0.1 (now is 0.01) it doesn't work at all
+    	if (CloudSim.clock() < 0.111 || CloudSim.clock() > getLastProcessTime() + 0.01) {
+            List<? extends Host> list = getVmAllocationPolicy().getHostList();
+            double smallerTime = Double.MAX_VALUE;
+            // for each host...
+            for (Host host : list) {
+                // inform VMs to update processing
+                double time = host.updateVmsProcessing(CloudSim.clock());
+                // what time do we expect that the next cloudlet will finish?
+                if (time < smallerTime) {
+                    smallerTime = time;
+                }
             }
-        }
-        return module;
-    }
-
-    /**
-     * Sending periodic tuple for an application edge. Note that for multiple instances of a single source module, only one tuple is sent DOWN while instanceCount number of tuples are sent UP.
-     *
-     * @param ev SimEvent instance containing the edge to send tuple on
-     */
-    protected void sendPeriodicTuple(SimEvent ev) {
-        AppEdge edge = (AppEdge) ev.getData();
-        String srcModule = edge.getSource();
-        AppModule module = getModuleByName(srcModule);
-
-        if (module == null)
-            return;
-
-        int instanceCount = module.getNumInstances();
-        /*
-         * Since tuples sent through a DOWN application edge are anyways broadcasted, only UP tuples are replicated
-         */
-        for (int i = 0; i < ((edge.getDirection() == Tuple.UP) ? instanceCount : 1); i++) {
-            //System.out.println(CloudSim.clock()+" : Sending periodic tuple "+edge.getTupleType());
-            Tuple tuple = applicationMap.get(module.getAppId()).createTuple(edge, getId(), module.getId());
-            updateTimingsOnSending(tuple);
-            sendToSelf(tuple);
-        }
-        send(getId(), edge.getPeriodicity(), FogEvents.SEND_PERIODIC_TUPLE, edge);
-    }
-
-    protected void processActuatorJoined(SimEvent ev) {
-        int actuatorId = ev.getSource();
-        double delay = (double) ev.getData();
-        getAssociatedActuatorIds().add(new Pair<Integer, Double>(actuatorId, delay));
-    }
-
-
-    protected void updateActiveApplications(SimEvent ev) {
-        Application app = (Application) ev.getData();
-        getActiveApplications().add(app.getAppId());
-    }
-
-
-    public String getOperatorName(int vmId) {
-        for (Vm vm : this.getHost().getVmList()) {
-            if (vm.getId() == vmId)
-                return ((AppModule) vm).getName();
-        }
-        return null;
-    }
-
-    /**
-     * Update cloudet processing without scheduling future events.
-     *
-     * @return the double
-     */
-    protected double updateCloudetProcessingWithoutSchedulingFutureEventsForce() {
-        double currentTime = CloudSim.clock();
-        double minTime = Double.MAX_VALUE;
-        double timeDiff = currentTime - getLastProcessTime();
-        double timeFrameDatacenterEnergy = 0.0;
-
-        for (PowerHost host : this.<PowerHost>getHostList()) {
-            Log.printLine();
-
-            double time = host.updateVmsProcessing(currentTime); // inform VMs to update processing
-            if (time < minTime) {
-                minTime = time;
+            // gurantees a minimal interval before scheduling the event
+            if (smallerTime < CloudSim.clock() + 0.11) {
+                smallerTime = CloudSim.clock() + 0.11;
             }
-
-            Log.formatLine(
-                    "%.2f: [Host #%d] utilization is %.2f%%",
-                    currentTime,
-                    host.getId(),
-                    host.getUtilizationOfCpu() * 100);
-        }
-
-        if (timeDiff > 0) {
-            Log.formatLine(
-                    "\nEnergy consumption for the last time frame from %.2f to %.2f:",
-                    getLastProcessTime(),
-                    currentTime);
-
-            for (PowerHost host : this.<PowerHost>getHostList()) {
-                double previousUtilizationOfCpu = host.getPreviousUtilizationOfCpu();
-                double utilizationOfCpu = host.getUtilizationOfCpu();
-                double timeFrameHostEnergy = host.getEnergyLinearInterpolation(
-                        previousUtilizationOfCpu,
-                        utilizationOfCpu,
-                        timeDiff);
-                timeFrameDatacenterEnergy += timeFrameHostEnergy;
-
-                Log.printLine();
-                Log.formatLine(
-                        "%.2f: [Host #%d] utilization at %.2f was %.2f%%, now is %.2f%%",
-                        currentTime,
-                        host.getId(),
-                        getLastProcessTime(),
-                        previousUtilizationOfCpu * 100,
-                        utilizationOfCpu * 100);
-                Log.formatLine(
-                        "%.2f: [Host #%d] energy is %.2f W*sec",
-                        currentTime,
-                        host.getId(),
-                        timeFrameHostEnergy);
+            if (smallerTime != Double.MAX_VALUE) {
+                schedule(getId(), (smallerTime - CloudSim.clock()), CloudSimTags.VM_DATACENTER_EVENT);
             }
-
-            Log.formatLine(
-                    "\n%.2f: Data center's energy is %.2f W*sec\n",
-                    currentTime,
-                    timeFrameDatacenterEnergy);
+            setLastProcessTime(CloudSim.clock());
         }
+    }
+	
+	/**
+	 * Update cloudet processing without scheduling future events.
+	 * 
+	 * @return the double
+	 */
+	protected double updateCloudetProcessingWithoutSchedulingFutureEventsForce() {
+		double currentTime = CloudSim.clock();
+		double minTime = Double.MAX_VALUE;
+		double timeDiff = currentTime - getLastProcessTime();
+		double timeFrameDatacenterEnergy = 0.0;
 
-        setPower(getPower() + timeFrameDatacenterEnergy);
+		for (PowerHost host : this.<PowerHost> getHostList()) {
+			Log.printLine();
 
-        checkCloudletCompletion();
+			double time = host.updateVmsProcessing(currentTime); // inform VMs to update processing
+			if (time < minTime) {
+				minTime = time;
+			}
 
-        /** Remove completed VMs **/
-        /**
-         * Change made by HARSHIT GUPTA
-         */
+			Log.formatLine(
+					"%.2f: [Host #%d] utilization is %.2f%%",
+					currentTime,
+					host.getId(),
+					host.getUtilizationOfCpu() * 100);
+		}
+
+		if (timeDiff > 0) {
+			Log.formatLine(
+					"\nEnergy consumption for the last time frame from %.2f to %.2f:",
+					getLastProcessTime(),
+					currentTime);
+
+			for (PowerHost host : this.<PowerHost> getHostList()) {
+				double previousUtilizationOfCpu = host.getPreviousUtilizationOfCpu();
+				double utilizationOfCpu = host.getUtilizationOfCpu();
+				double timeFrameHostEnergy = host.getEnergyLinearInterpolation(
+						previousUtilizationOfCpu,
+						utilizationOfCpu,
+						timeDiff);
+				timeFrameDatacenterEnergy += timeFrameHostEnergy;
+
+				Log.printLine();
+				Log.formatLine(
+						"%.2f: [Host #%d] utilization at %.2f was %.2f%%, now is %.2f%%",
+						currentTime,
+						host.getId(),
+						getLastProcessTime(),
+						previousUtilizationOfCpu * 100,
+						utilizationOfCpu * 100);
+				Log.formatLine(
+						"%.2f: [Host #%d] energy is %.2f W*sec",
+						currentTime,
+						host.getId(),
+						timeFrameHostEnergy);
+			}
+
+			Log.formatLine(
+					"\n%.2f: Data center's energy is %.2f W*sec\n",
+					currentTime,
+					timeFrameDatacenterEnergy);
+		}
+
+		setPower(getPower() + timeFrameDatacenterEnergy);
+
+		checkCloudletCompletion();
+
+		/** Remove completed VMs **/
+		/**
+		 * Change made by HARSHIT GUPTA
+		 */
 		/*for (PowerHost host : this.<PowerHost> getHostList()) {
 			for (Vm vm : host.getCompletedVms()) {
 				getVmAllocationPolicy().deallocateHostForVm(vm);
@@ -491,697 +319,500 @@ public class FogDevice extends PowerDatacenter {
 				Log.printLine("VM #" + vm.getId() + " has been deallocated from host #" + host.getId());
 			}
 		}*/
+		
+		Log.printLine();
 
-        Log.printLine();
-
-        setLastProcessTime(currentTime);
-        return minTime;
-    }
+		setLastProcessTime(currentTime);
+		return minTime;
+	}
 
 
-    protected void checkCloudletCompletion() {
-        boolean cloudletCompleted = false;
-        List<? extends Host> list = getVmAllocationPolicy().getHostList();
-        for (int i = 0; i < list.size(); i++) {
-            Host host = list.get(i);
-            for (Vm vm : host.getVmList()) {
-                while (vm.getCloudletScheduler().isFinishedCloudlets()) {
-                    Cloudlet cl = vm.getCloudletScheduler().getNextFinishedCloudlet();
-                    if (cl != null) {
-
-                        cloudletCompleted = true;
-                        Tuple tuple = (Tuple) cl;
-                        TimeKeeper.getInstance().tupleEndedExecution(tuple);
-                        Application application = getApplicationMap().get(tuple.getAppId());
-                        Logger.debug(getName(), "Completed execution of tuple " + tuple.getCloudletId() + "on " + tuple.getDestModuleName());
-                        List<Tuple> resultantTuples = application.getResultantTuples(tuple.getDestModuleName(), tuple, getId(), vm.getId());
-                        for (Tuple resTuple : resultantTuples) {
-                            resTuple.setModuleCopyMap(new HashMap<String, Integer>(tuple.getModuleCopyMap()));
-                            resTuple.getModuleCopyMap().put(((AppModule) vm).getName(), vm.getId());
-                            updateTimingsOnSending(resTuple);
-                            sendToSelf(resTuple);
-                        }
-                        sendNow(cl.getUserId(), CloudSimTags.CLOUDLET_RETURN, cl);
-                    }
+	protected void checkCloudletCompletion() {  //有修改
+		//boolean cloudletCompleted = false;
+		List<? extends Host> list = getVmAllocationPolicy().getHostList();
+		for (int i = 0; i < list.size(); i++) {
+			Host host = list.get(i);
+			for (Vm vm : host.getVmList()) {
+				while (vm.getCloudletScheduler().isFinishedCloudlets()) {
+					Cloudlet cl = vm.getCloudletScheduler().getNextFinishedCloudlet();
+					if (cl != null) {
+						sendNow(cl.getUserId(), CloudSimTags.CLOUDLET_RETURN, cl);
+						register(cl);
+					}
+				}
+			}
+		}
+		//if(cloudletCompleted)
+		//	updateAllocatedMips(null);
+	}
+	
+	private void register(Cloudlet cl) {
+        Task tl = (Task) cl;
+        List<FileItem> fList = tl.getFileList();
+        for (FileItem file : fList) {
+            if (file.getType() == FileType.OUTPUT)//output file
+            {
+                switch (ReplicaCatalog.getFileSystem()) {
+                    case SHARED:
+                        ReplicaCatalog.addFileToStorage(file.getName(), this.getName());
+                        break;
+                    case LOCAL:
+                        int vmId = cl.getVmId();
+                        int userId = cl.getUserId();
+                        Host host = getVmAllocationPolicy().getHost(vmId, userId);
+                        /**
+                         * Left here for future work
+                         */
+                        CondorVM vm = (CondorVM) host.getVm(vmId, userId);
+                        ReplicaCatalog.addFileToStorage(file.getName(), Integer.toString(vmId));
+                        break;
                 }
             }
         }
-        if (cloudletCompleted)
-            updateAllocatedMips(null);
     }
 
-    protected void updateTimingsOnSending(Tuple resTuple) {
-        // TODO ADD CODE FOR UPDATING TIMINGS WHEN A TUPLE IS GENERATED FROM A PREVIOUSLY RECIEVED TUPLE.
-        // WILL NEED TO CHECK IF A NEW LOOP STARTS AND INSERT A UNIQUE TUPLE ID TO IT.
-        String srcModule = resTuple.getSrcModuleName();
-        String destModule = resTuple.getDestModuleName();
-        for (AppLoop loop : getApplicationMap().get(resTuple.getAppId()).getLoops()) {
-            if (loop.hasEdge(srcModule, destModule) && loop.isStartModule(srcModule)) {
-                int tupleId = TimeKeeper.getInstance().getUniqueId();
-                resTuple.setActualTupleId(tupleId);
-                if (!TimeKeeper.getInstance().getLoopIdToTupleIds().containsKey(loop.getLoopId()))
-                    TimeKeeper.getInstance().getLoopIdToTupleIds().put(loop.getLoopId(), new ArrayList<Integer>());
-                TimeKeeper.getInstance().getLoopIdToTupleIds().get(loop.getLoopId()).add(tupleId);
-                TimeKeeper.getInstance().getEmitTimes().put(tupleId, CloudSim.clock());
-
-                //Logger.debug(getName(), "\tSENDING\t"+tuple.getActualTupleId()+"\tSrc:"+srcModule+"\tDest:"+destModule);
-
-            }
-        }
-    }
-
-    protected int getChildIdWithRouteTo(int targetDeviceId) {
-        for (Integer childId : getChildrenIds()) {
-            if (targetDeviceId == childId)
-                return childId;
-            if (((FogDevice) CloudSim.getEntity(childId)).getChildIdWithRouteTo(targetDeviceId) != -1)
-                return childId;
-        }
-        return -1;
-    }
-
-    protected int getChildIdForTuple(Tuple tuple) {
-        if (tuple.getDirection() == Tuple.ACTUATOR) {
-            int gatewayId = ((Actuator) CloudSim.getEntity(tuple.getActuatorId())).getGatewayDeviceId();
-            return getChildIdWithRouteTo(gatewayId);
-        }
-        return -1;
-    }
-
-    protected void updateAllocatedMips(String incomingOperator) {
-        getHost().getVmScheduler().deallocatePesForAllVms();
-        for (final Vm vm : getHost().getVmList()) {
-            if (vm.getCloudletScheduler().runningCloudlets() > 0 || ((AppModule) vm).getName().equals(incomingOperator)) {
-                getHost().getVmScheduler().allocatePesForVm(vm, new ArrayList<Double>() {
-                    protected static final long serialVersionUID = 1L;
-
-                    {
-                        add((double) getHost().getTotalMips());
-                    }
-                });
-            } else {
-                getHost().getVmScheduler().allocatePesForVm(vm, new ArrayList<Double>() {
-                    protected static final long serialVersionUID = 1L;
-
-                    {
-                        add(0.0);
-                    }
-                });
-            }
-        }
-
-        updateEnergyConsumption();
-
-    }
-
-    private void updateEnergyConsumption() {
-        double totalMipsAllocated = 0;
-        for (final Vm vm : getHost().getVmList()) {
-            AppModule operator = (AppModule) vm;
-            operator.updateVmProcessing(CloudSim.clock(), getVmAllocationPolicy().getHost(operator).getVmScheduler()
-                    .getAllocatedMipsForVm(operator));
-            totalMipsAllocated += getHost().getTotalAllocatedMipsForVm(vm);
-        }
-
-        double timeNow = CloudSim.clock();
-        double currentEnergyConsumption = getEnergyConsumption();
-        double newEnergyConsumption = currentEnergyConsumption + (timeNow - lastUtilizationUpdateTime) * getHost().getPowerModel().getPower(lastUtilization);
-        setEnergyConsumption(newEnergyConsumption);
+	protected int getChildIdWithRouteTo(int targetDeviceId){
+		for(Integer childId : getChildrenIds()){
+			if(targetDeviceId == childId)
+				return childId;
+			if(((FogDevice)CloudSim.getEntity(childId)).getChildIdWithRouteTo(targetDeviceId) != -1)
+				return childId;
+		}
+		return -1;
+	}
 	
-		/*if(getName().equals("d-0")){
+/*	public void updateEnergyConsumption() {
+		double totalMipsAllocated = 0;
+		double Energy = 0;//getEnergyConsumption();
+		double ExecutionTime = 0;
+		double Cost = 0;
+		//System.out.println(getName()+"能耗:"+Energy);
+		List<PowerHost> hostlist = getHostList();
+		for(PowerHost host : hostlist){
+			//double newenergy = host.updateEnergyConsumption();
+			if(getName().contains("m")){//计算手机能耗
+				//Energy += newenergy;
+				ExecutionTime += host.ExecutionTime;
+			}
+			else {//计算服务器费用
+				Cost += host.updateCost();
+			}
+		}
+
+		double timeNow = CloudSim.clock();
+		//System.out.println("---------------------------------------------time now: "+timeNow);
+		//double currentEnergyConsumption = getEnergyConsumption();
+		double usetime=getExecutionTime()+timeNow-lastUtilizationUpdateTime;  //求该设备执行时间之和
+		//double newEnergyConsumption = currentEnergyConsumption + (timeNow-lastUtilizationUpdateTime)*getHost().getPowerModel().getPower(lastUtilization);
+		//setEnergyConsumption(Energy);
+		setExecutionTime(ExecutionTime);
+	
+		if(getName().equals("d-0")){
 			System.out.println("------------------------");
 			System.out.println("Utilization = "+lastUtilization);
 			System.out.println("Power = "+getHost().getPowerModel().getPower(lastUtilization));
 			System.out.println(timeNow-lastUtilizationUpdateTime);
-		}*/
-
-        double currentCost = getTotalCost();
-        double newcost = currentCost + (timeNow - lastUtilizationUpdateTime) * getRatePerMips() * lastUtilization * getHost().getTotalMips();
-        setTotalCost(newcost);
-
-        lastUtilization = Math.min(1, totalMipsAllocated / getHost().getTotalMips());
-        lastUtilizationUpdateTime = timeNow;
-    }
-
-    protected void processAppSubmit(SimEvent ev) {
-        Application app = (Application) ev.getData();
-        applicationMap.put(app.getAppId(), app);
-    }
-
-    public void addChild(int childId) {
-        if (CloudSim.getEntityName(childId).toLowerCase().contains("sensor"))
-            return;
-        if (!getChildrenIds().contains(childId) && childId != getId())
-            getChildrenIds().add(childId);
-        if (!getChildToOperatorsMap().containsKey(childId))
-            getChildToOperatorsMap().put(childId, new ArrayList<String>());
-    }
-
-
-    protected void updateCloudTraffic() {
-        int time = (int) CloudSim.clock() / 1000;
-        if (!cloudTrafficMap.containsKey(time))
-            cloudTrafficMap.put(time, 0);
-        cloudTrafficMap.put(time, cloudTrafficMap.get(time) + 1);
-    }
-
-    protected void sendTupleToActuator(Tuple tuple) {
-		/*for(Pair<Integer, Double> actuatorAssociation : getAssociatedActuatorIds()){
-			int actuatorId = actuatorAssociation.getFirst();
-			double delay = actuatorAssociation.getSecond();
-			if(actuatorId == tuple.getActuatorId()){
-				send(actuatorId, delay, FogEvents.TUPLE_ARRIVAL, tuple);
-				return;
-			}
 		}
-		int childId = getChildIdForTuple(tuple);
-		if(childId != -1)
-			sendDown(tuple, childId);*/
-        for (Pair<Integer, Double> actuatorAssociation : getAssociatedActuatorIds()) {
-            int actuatorId = actuatorAssociation.getFirst();
-            double delay = actuatorAssociation.getSecond();
-            String actuatorType = ((Actuator) CloudSim.getEntity(actuatorId)).getActuatorType();
-            if (tuple.getDestModuleName().equals(actuatorType)) {
-                send(actuatorId, delay, FogEvents.TUPLE_ARRIVAL, tuple);
+		
+		double currentCost = getTotalCost();
+		double newcost = currentCost + (timeNow-lastUtilizationUpdateTime)*getRatePerMips()*lastUtilization*getHost().getTotalMips();
+		//setTotalCost(Cost);
+		
+		
+		lastUtilization = Math.min(1, totalMipsAllocated/getHost().getTotalMips());
+		lastUtilizationUpdateTime = timeNow;
+	}*/
+
+    /**
+     * Processes a Cloudlet submission. The cloudlet is actually a job which can
+     * be cast to org.workflowsim.Job
+     *
+     * @param ev a SimEvent object
+     * @param ack an acknowledgement
+     * @pre ev != null
+     * @post $none
+     */
+    @Override
+    protected void processCloudletSubmit(SimEvent ev, boolean ack) {
+        updateCloudletProcessing();
+       
+        try {
+            /**
+             * cl is actually a job but it is not necessary to cast it to a job
+             */
+            Job job = (Job) ev.getData();
+           // System.out.println(job.getCloudletId());
+
+            if (job.isFinished()) {
+                String name = CloudSim.getEntityName(job.getUserId());
+                Log.printLine(getName() + ": Warning - Cloudlet #" + job.getCloudletId() + " owned by " + name
+                        + " is already completed/finished.");
+                Log.printLine("Therefore, it is not being executed again");
+                Log.printLine();
+
+                // NOTE: If a Cloudlet has finished, then it won't be processed.
+                // So, if ack is required, this method sends back a result.
+                // If ack is not required, this method don't send back a result.
+                // Hence, this might cause CloudSim to be hanged since waiting
+                // for this Cloudlet back.
+                if (ack) {
+                    int[] data = new int[3];
+                    data[0] = getId();
+                    data[1] = job.getCloudletId();
+                    data[2] = CloudSimTags.FALSE;
+
+                    // unique tag = operation tag
+                    int tag = CloudSimTags.CLOUDLET_SUBMIT_ACK;
+                    sendNow(job.getUserId(), tag, data);
+                }
+                sendNow(job.getUserId(), CloudSimTags.CLOUDLET_RETURN, job);
+
                 return;
             }
-        }
-        for (int childId : getChildrenIds()) {
-            sendDown(tuple, childId);
-        }
-    }
 
-    int numClients = 0;
+            int userId = job.getUserId();
+            int vmId = job.getVmId();
+            Host host = getVmAllocationPolicy().getHost(vmId, userId);
+//            System.out.println("host.id:"+host.getId()+" vmId:"+vmId);
+            CondorVM vm = (CondorVM) host.getVm(vmId, userId);
 
-    protected void processTupleArrival(SimEvent ev) {
-        Tuple tuple = (Tuple) ev.getData();
-
-        if (getName().equals("cloud")) {
-            updateCloudTraffic();
-        }
-		
-		/*if(getName().equals("d-0") && tuple.getTupleType().equals("_SENSOR")){
-			System.out.println(++numClients);
-		}*/
-        Logger.debug(getName(), "Received tuple " + tuple.getCloudletId() + "with tupleType = " + tuple.getTupleType() + "\t| Source : " +
-                CloudSim.getEntityName(ev.getSource()) + "|Dest : " + CloudSim.getEntityName(ev.getDestination()));
-		
-		/*if(CloudSim.getEntityName(ev.getSource()).equals("drone_0")||CloudSim.getEntityName(ev.getDestination()).equals("drone_0"))
-			System.out.println(CloudSim.clock()+" "+getName()+" Received tuple "+tuple.getCloudletId()+" with tupleType = "+tuple.getTupleType()+"\t| Source : "+
-		CloudSim.getEntityName(ev.getSource())+"|Dest : "+CloudSim.getEntityName(ev.getDestination()));*/
-
-        send(ev.getSource(), CloudSim.getMinTimeBetweenEvents(), FogEvents.TUPLE_ACK);
-
-        if (FogUtils.appIdToGeoCoverageMap.containsKey(tuple.getAppId())) {
-        }
-
-        if (tuple.getDirection() == Tuple.ACTUATOR) {
-            sendTupleToActuator(tuple);
-            return;
-        }
-
-        if (getHost().getVmList().size() > 0) {
-            final AppModule operator = (AppModule) getHost().getVmList().get(0);
-            if (CloudSim.clock() > 0) {
-                getHost().getVmScheduler().deallocatePesForVm(operator);
-                getHost().getVmScheduler().allocatePesForVm(operator, new ArrayList<Double>() {
-                    protected static final long serialVersionUID = 1L;
-
-                    {
-                        add((double) getHost().getTotalMips());
-                    }
-                });
-            }
-        }
-
-
-        if (getName().equals("cloud") && tuple.getDestModuleName() == null) {
-            sendNow(getControllerId(), FogEvents.TUPLE_FINISHED, null);
-        }
-
-        if (appToModulesMap.containsKey(tuple.getAppId())) {
-            if (appToModulesMap.get(tuple.getAppId()).contains(tuple.getDestModuleName())) {
-                int vmId = -1;
-                for (Vm vm : getHost().getVmList()) {
-                    if (((AppModule) vm).getName().equals(tuple.getDestModuleName()))
-                        vmId = vm.getId();
-                }
-                if (vmId < 0
-                        || (tuple.getModuleCopyMap().containsKey(tuple.getDestModuleName()) &&
-                        tuple.getModuleCopyMap().get(tuple.getDestModuleName()) != vmId)) {
-                    return;
-                }
-                tuple.setVmId(vmId);
-                //Logger.error(getName(), "Executing tuple for operator " + moduleName);
-
-                updateTimingsOnReceipt(tuple);
-
-                executeTuple(ev, tuple.getDestModuleName());
-            } else if (tuple.getDestModuleName() != null) {
-                if (tuple.getDirection() == Tuple.UP)
-                    sendUp(tuple);
-                else if (tuple.getDirection() == Tuple.DOWN) {
-                    for (int childId : getChildrenIds())
-                        sendDown(tuple, childId);
-                }
-            } else {
-                sendUp(tuple);
-            }
-        } else {
-            if (tuple.getDirection() == Tuple.UP)
-                sendUp(tuple);
-            else if (tuple.getDirection() == Tuple.DOWN) {
-                for (int childId : getChildrenIds())
-                    sendDown(tuple, childId);
-            }
-        }
-    }
-
-    protected void updateTimingsOnReceipt(Tuple tuple) {
-        Application app = getApplicationMap().get(tuple.getAppId());
-        String srcModule = tuple.getSrcModuleName();
-        String destModule = tuple.getDestModuleName();
-        List<AppLoop> loops = app.getLoops();
-        for (AppLoop loop : loops) {
-            if (loop.hasEdge(srcModule, destModule) && loop.isEndModule(destModule)) {
-                Double startTime = TimeKeeper.getInstance().getEmitTimes().get(tuple.getActualTupleId());
-                if (startTime == null)
+            switch (Parameters.getCostModel()) {
+                case DATACENTER:
+                    // process this Cloudlet to this CloudResource
+                    job.setResourceParameter(getId(), getCharacteristics().getCostPerSecond(),
+                            getCharacteristics().getCostPerBw());
                     break;
-                if (!TimeKeeper.getInstance().getLoopIdToCurrentAverage().containsKey(loop.getLoopId())) {
-                    TimeKeeper.getInstance().getLoopIdToCurrentAverage().put(loop.getLoopId(), 0.0);
-                    TimeKeeper.getInstance().getLoopIdToCurrentNum().put(loop.getLoopId(), 0);
+                case VM:
+                    job.setResourceParameter(getId(), vm.getCost(), vm.getCostPerBW());
+                    break;
+                default:
+                    break;
+            }
+
+            /**
+             * Stage-in file && Shared based on the file.system
+             */
+            if (job.getClassType() == ClassType.STAGE_IN.value) {
+                stageInFile2FileSystem(job);
+            }
+
+            /**
+             * Add data transfer time (communication cost)
+             */
+            double fileTransferTime = 0.0;
+            if (job.getClassType() == ClassType.COMPUTE.value) {
+                fileTransferTime = processDataStageInForComputeJob(job.getFileList(), job);
+            }
+
+            CloudletScheduler scheduler = vm.getCloudletScheduler();
+            double estimatedFinishTime = scheduler.cloudletSubmit(job, fileTransferTime);
+            updateTaskExecTime(job, vm);
+
+            // if this cloudlet is in the exec queue
+            if (estimatedFinishTime > 0.0 && !Double.isInfinite(estimatedFinishTime)) {
+                send(getId(), estimatedFinishTime, CloudSimTags.VM_DATACENTER_EVENT);
+            } else {
+                //Log.printLine("Warning: You schedule cloudlet to a busy VM");
+            }
+
+            if (ack) {
+                int[] data = new int[3];
+                data[0] = getId();
+                data[1] = job.getCloudletId();
+                data[2] = CloudSimTags.TRUE;
+
+                int tag = CloudSimTags.CLOUDLET_SUBMIT_ACK;
+                sendNow(job.getUserId(), tag, data);
+            }
+        } catch (ClassCastException c) {
+            Log.printLine(getName() + ".processCloudletSubmit(): " + "ClassCastException error.");
+        } catch (Exception e) {
+            Log.printLine(getName() + ".processCloudletSubmit(): " + "Exception error.");
+            e.printStackTrace();
+        }
+        checkCloudletCompletion();
+    }
+    
+    /**
+     * Update the submission time/exec time of a job
+     *
+     * @param job
+     * @param vm
+     */
+    private void updateTaskExecTime(Job job, Vm vm) {
+        double start_time = job.getExecStartTime();
+        for (Task task : job.getTaskList()) {
+            task.setExecStartTime(start_time);
+            double task_runtime = task.getCloudletLength() / vm.getMips();
+            start_time += task_runtime;
+            //Because CloudSim would not let us update end time here
+            task.setTaskFinishTime(start_time);
+        }
+    }
+
+    /**
+     * Stage in files for a stage-in job. For a local file system (such as
+     * condor-io) add files to the local storage; For a shared file system (such
+     * as NFS) add files to the shared storage
+     *
+     * @param cl, the job
+     * @pre $none
+     * @post $none
+     */
+    private void stageInFile2FileSystem(Job job) {
+        List<FileItem> fList = job.getFileList();
+
+        for (FileItem file : fList) {
+            switch (ReplicaCatalog.getFileSystem()) {
+                /**
+                 * For local file system, add it to local storage (data center
+                 * name)
+                 */
+                case LOCAL:
+                    ReplicaCatalog.addFileToStorage(file.getName(), this.getName());
+                    /**
+                     * Is it not really needed currently but it is left for
+                     * future usage
+                     */
+                    //ClusterStorage storage = (ClusterStorage) getStorageList().get(0);
+                    //storage.addFile(file);
+                    break;
+                /**
+                 * For shared file system, add it to the shared storage
+                 */
+                case SHARED:
+                    ReplicaCatalog.addFileToStorage(file.getName(), this.getName());
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /*
+     * Stage in for a single job (both stage-in job and compute job)
+     * @param requiredFiles, all files to be stage-in
+     * @param job, the job to be processed
+     * @pre  $none
+     * @post $none
+     */
+    protected double processDataStageInForComputeJob(List<FileItem> requiredFiles, Job job) throws Exception {
+        double time = 0.0;
+        Controller controller = (Controller)CloudSim.getEntity(controllerId);
+        for (FileItem file : requiredFiles) {
+            //The input file is not an output File 
+            if (file.isRealInputFile(requiredFiles)) {
+                double maxBwth = 0.0;
+				List siteList = ReplicaCatalog.getStorageList(file.getName());
+                if (siteList.isEmpty()) {
+                    throw new Exception(file.getName() + " does not exist");
                 }
-                double currentAverage = TimeKeeper.getInstance().getLoopIdToCurrentAverage().get(loop.getLoopId());
-                int currentCount = TimeKeeper.getInstance().getLoopIdToCurrentNum().get(loop.getLoopId());
-                double delay = CloudSim.clock() - TimeKeeper.getInstance().getEmitTimes().get(tuple.getActualTupleId());
-                TimeKeeper.getInstance().getEmitTimes().remove(tuple.getActualTupleId());
-                double newAverage = (currentAverage * currentCount + delay) / (currentCount + 1);
-                TimeKeeper.getInstance().getLoopIdToCurrentAverage().put(loop.getLoopId(), newAverage);
-                TimeKeeper.getInstance().getLoopIdToCurrentNum().put(loop.getLoopId(), currentCount + 1);
-                break;
+                switch (ReplicaCatalog.getFileSystem()) {
+                    case SHARED: //进入share
+                        //stage-in job
+                        /**
+                         * Picks up the site that is closest
+                         */
+                        /*double maxRate = Double.MIN_VALUE;
+                        for (Storage storage : getStorageList()) {
+                            double rate = storage.getMaxTransferRate();
+                            if (rate > maxRate) {
+                                maxRate = rate;
+                            }
+                        }
+                        //Storage storage = getStorageList().get(0);
+                        
+                        time += file.getSize() / (double) Consts.MILLION / maxRate;*/
+                        if(getId() == controller.getcloud().getId())
+                        	time += file.getSize() / controller.parameter / controller.WAN_Bandwidth;
+                        else if(getId() == controller.getFogNode().getId())
+                        	time += file.getSize() / controller.parameter / controller.LAN_Bandwidth;
+                        break;
+                    case LOCAL:
+                        int vmId = job.getVmId();
+                        int userId = job.getUserId();
+                        Host host = getVmAllocationPolicy().getHost(vmId, userId);
+                        Vm vm = host.getVm(vmId, userId);
+
+                        boolean requiredFileStagein = true;
+                        for (Iterator it = siteList.iterator(); it.hasNext();) {
+                            //site is where one replica of this data is located at
+                            String site = (String) it.next();
+                            if (site.equals(this.getName())) {
+                                continue;
+                            }
+                            /**
+                             * This file is already in the local vm and thus it
+                             * is no need to transfer
+                             */
+                            if (site.equals(Integer.toString(vmId))) {
+                                requiredFileStagein = false;
+                                break;
+                            }
+                            double bwth;
+                            if (site.equals(Parameters.SOURCE)) {
+                                //transfers from the source to the VM is limited to the VM bw only
+                                bwth = vm.getBw();
+                                //bwth = dcStorage.getBaseBandwidth();
+                            } else {
+                                //transfers between two VMs is limited to both VMs
+                                bwth = Math.min(vm.getBw(), getVmAllocationPolicy().getHost(Integer.parseInt(site), userId).getVm(Integer.parseInt(site), userId).getBw());
+                                //bwth = dcStorage.getBandwidth(Integer.parseInt(site), vmId);
+                            }
+                            if (bwth > maxBwth) {
+                                maxBwth = bwth;
+                            }
+                        }
+                        if (requiredFileStagein && maxBwth > 0.0) {
+                            time += file.getSize() / (double) Consts.MILLION / maxBwth;
+                        }
+
+                        /**
+                         * For the case when storage is too small it is not
+                         * handled here
+                         */
+                        //We should add but since CondorVm has a small capability it often fails
+                        //We currently don't use this storage to do anything meaningful. It is left for future. 
+                        //condorVm.addLocalFile(file);
+                        ReplicaCatalog.addFileToStorage(file.getName(), Integer.toString(vmId));
+                        break;
+                }
             }
         }
-    }
-
-    protected void processSensorJoining(SimEvent ev) {
-        send(ev.getSource(), CloudSim.getMinTimeBetweenEvents(), FogEvents.TUPLE_ACK);
-    }
-
-    protected void executeTuple(SimEvent ev, String moduleName) {
-        Logger.debug(getName(), "Executing tuple on module " + moduleName);
-        Tuple tuple = (Tuple) ev.getData();
-
-        AppModule module = getModuleByName(moduleName);
-
-        if (tuple.getDirection() == Tuple.UP) {
-            String srcModule = tuple.getSrcModuleName();
-            if (!module.getDownInstanceIdsMaps().containsKey(srcModule))
-                module.getDownInstanceIdsMaps().put(srcModule, new ArrayList<Integer>());
-            if (!module.getDownInstanceIdsMaps().get(srcModule).contains(tuple.getSourceModuleId()))
-                module.getDownInstanceIdsMaps().get(srcModule).add(tuple.getSourceModuleId());
-
-            int instances = -1;
-            for (String _moduleName : module.getDownInstanceIdsMaps().keySet()) {
-                instances = Math.max(module.getDownInstanceIdsMaps().get(_moduleName).size(), instances);
-            }
-            module.setNumInstances(instances);
-        }
-
-        TimeKeeper.getInstance().tupleStartedExecution(tuple);
-        updateAllocatedMips(moduleName);
-        processCloudletSubmit(ev, false);
-        updateAllocatedMips(moduleName);
-		/*for(Vm vm : getHost().getVmList()){
-			Logger.error(getName(), "MIPS allocated to "+((AppModule)vm).getName()+" = "+getHost().getTotalAllocatedMipsForVm(vm));
-		}*/
-    }
-
-    protected void processModuleArrival(SimEvent ev) {
-        AppModule module = (AppModule) ev.getData();
-        String appId = module.getAppId();
-        if (!appToModulesMap.containsKey(appId)) {
-            appToModulesMap.put(appId, new ArrayList<String>());
-        }
-        appToModulesMap.get(appId).add(module.getName());
-        processVmCreate(ev, false);
-        if (module.isBeingInstantiated()) {
-            module.setBeingInstantiated(false);
-        }
-
-        initializePeriodicTuples(module);
-
-        module.updateVmProcessing(CloudSim.clock(), getVmAllocationPolicy().getHost(module).getVmScheduler()
-                .getAllocatedMipsForVm(module));
-
-    }
-
-    protected void processModuleTermination(SimEvent ev) {
-        processVmDestroy(ev, false);
-    }
-
-    protected void initializePeriodicTuples(AppModule module) {
-        String appId = module.getAppId();
-        Application app = getApplicationMap().get(appId);
-        List<AppEdge> periodicEdges = app.getPeriodicEdges(module.getName());
-        for (AppEdge edge : periodicEdges) {
-            send(getId(), edge.getPeriodicity(), FogEvents.SEND_PERIODIC_TUPLE, edge);
-        }
-    }
-
-    protected void processOperatorRelease(SimEvent ev) {
-        this.processVmMigrate(ev, false);
-    }
-
-
-    protected void updateNorthTupleQueue() {
-        if (!getNorthTupleQueue().isEmpty()) {
-            Tuple tuple = getNorthTupleQueue().poll();
-            sendUpFreeLink(tuple);
-        } else {
-            setNorthLinkBusy(false);
-        }
-    }
-
-    protected void sendUpFreeLink(Tuple tuple) {
-        double networkDelay = tuple.getCloudletFileSize() / getUplinkBandwidth();
-        setNorthLinkBusy(true);
-        send(getId(), networkDelay, FogEvents.UPDATE_NORTH_TUPLE_QUEUE);
-        send(parentId, networkDelay + getUplinkLatency(), FogEvents.TUPLE_ARRIVAL, tuple);
-        NetworkUsageMonitor.sendingTuple(getUplinkLatency(), tuple.getCloudletFileSize());
-    }
-
-    protected void sendUp(Tuple tuple) {
-        if (parentId > 0) {
-            if (!isNorthLinkBusy()) {
-                sendUpFreeLink(tuple);
-            } else {
-                northTupleQueue.add(tuple);
-            }
-        }
-    }
-
-
-    protected void updateSouthTupleQueue() {
-        if (!getSouthTupleQueue().isEmpty()) {
-            Pair<Tuple, Integer> pair = getSouthTupleQueue().poll();
-            sendDownFreeLink(pair.getFirst(), pair.getSecond());
-        } else {
-            setSouthLinkBusy(false);
-        }
-    }
-
-    protected void sendDownFreeLink(Tuple tuple, int childId) {
-        double networkDelay = tuple.getCloudletFileSize() / getDownlinkBandwidth();
-        //Logger.debug(getName(), "Sending tuple with tupleType = "+tuple.getTupleType()+" DOWN");
-        setSouthLinkBusy(true);
-        //System.out.println(getName()+" Sending tuple with tupleType = "+tuple.getTupleType()+" to "+childId);
-        double latency = getChildToLatencyMap().get(childId);
-        send(getId(), networkDelay, FogEvents.UPDATE_SOUTH_TUPLE_QUEUE);
-        send(childId, networkDelay + latency, FogEvents.TUPLE_ARRIVAL, tuple);
-        NetworkUsageMonitor.sendingTuple(latency, tuple.getCloudletFileSize());
-    }
-
-    protected void sendDown(Tuple tuple, int childId) {
-        if (getChildrenIds().contains(childId)) {
-            if (!isSouthLinkBusy()) {
-                sendDownFreeLink(tuple, childId);
-            } else {
-                southTupleQueue.add(new Pair<Tuple, Integer>(tuple, childId));
-            }
-        }
-    }
-
-
-    protected void sendToSelf(Tuple tuple) {
-        send(getId(), CloudSim.getMinTimeBetweenEvents(), FogEvents.TUPLE_ARRIVAL, tuple);
-    }
-
-    public PowerHost getHost() {
-        return (PowerHost) getHostList().get(0);
-    }
-
-    public int getParentId() {
-        return parentId;
-    }
-
-    public void setParentId(int parentId) {
-        this.parentId = parentId;
-    }
-
-    public List<Integer> getChildrenIds() {
-        return childrenIds;
-    }
-
-    public void setChildrenIds(List<Integer> childrenIds) {
-        this.childrenIds = childrenIds;
-    }
-
-    public double getUplinkBandwidth() {
-        return uplinkBandwidth;
-    }
-
-    public void setUplinkBandwidth(double uplinkBandwidth) {
-        this.uplinkBandwidth = uplinkBandwidth;
-    }
-
-    public double getUplinkLatency() {
-        return uplinkLatency;
-    }
-
-    public void setUplinkLatency(double uplinkLatency) {
-        this.uplinkLatency = uplinkLatency;
-    }
-
-    public boolean isSouthLinkBusy() {
-        return isSouthLinkBusy;
-    }
-
-    public boolean isNorthLinkBusy() {
-        return isNorthLinkBusy;
-    }
-
-    public void setSouthLinkBusy(boolean isSouthLinkBusy) {
-        this.isSouthLinkBusy = isSouthLinkBusy;
-    }
-
-    public void setNorthLinkBusy(boolean isNorthLinkBusy) {
-        this.isNorthLinkBusy = isNorthLinkBusy;
-    }
-
-    public int getControllerId() {
-        return controllerId;
-    }
-
-    public void setControllerId(int controllerId) {
-        this.controllerId = controllerId;
-    }
-
-    public List<String> getActiveApplications() {
-        return activeApplications;
-    }
-
-    public void setActiveApplications(List<String> activeApplications) {
-        this.activeApplications = activeApplications;
-    }
-
-    public Map<Integer, List<String>> getChildToOperatorsMap() {
-        return childToOperatorsMap;
-    }
-
-    public void setChildToOperatorsMap(Map<Integer, List<String>> childToOperatorsMap) {
-        this.childToOperatorsMap = childToOperatorsMap;
-    }
-
-    public Map<String, Application> getApplicationMap() {
-        return applicationMap;
-    }
-
-    public void setApplicationMap(Map<String, Application> applicationMap) {
-        this.applicationMap = applicationMap;
-    }
-
-    public Queue<Tuple> getNorthTupleQueue() {
-        return northTupleQueue;
-    }
-
-    public void setNorthTupleQueue(Queue<Tuple> northTupleQueue) {
-        this.northTupleQueue = northTupleQueue;
-    }
-
-    public Queue<Pair<Tuple, Integer>> getSouthTupleQueue() {
-        return southTupleQueue;
-    }
-
-    public void setSouthTupleQueue(Queue<Pair<Tuple, Integer>> southTupleQueue) {
-        this.southTupleQueue = southTupleQueue;
-    }
-
-    public double getDownlinkBandwidth() {
-        return downlinkBandwidth;
-    }
-
-    public void setDownlinkBandwidth(double downlinkBandwidth) {
-        this.downlinkBandwidth = downlinkBandwidth;
-    }
-
-    public List<Pair<Integer, Double>> getAssociatedActuatorIds() {
-        return associatedActuatorIds;
-    }
-
-    public void setAssociatedActuatorIds(List<Pair<Integer, Double>> associatedActuatorIds) {
-        this.associatedActuatorIds = associatedActuatorIds;
-    }
-
-    public double getEnergyConsumption() {
-        return energyConsumption;
-    }
-
-    public void setEnergyConsumption(double energyConsumption) {
-        this.energyConsumption = energyConsumption;
-    }
-
-    public Map<Integer, Double> getChildToLatencyMap() {
-        return childToLatencyMap;
-    }
-
-    public void setChildToLatencyMap(Map<Integer, Double> childToLatencyMap) {
-        this.childToLatencyMap = childToLatencyMap;
-    }
-
-    public int getLevel() {
-        return level;
-    }
-
-    public void setLevel(int level) {
-        this.level = level;
-    }
-
-    public double getRatePerMips() {
-        return ratePerMips;
-    }
-
-    public void setRatePerMips(double ratePerMips) {
-        this.ratePerMips = ratePerMips;
-    }
-
-    public double getTotalCost() {
-        return totalCost;
-    }
-
-    public void setTotalCost(double totalCost) {
-        this.totalCost = totalCost;
-    }
-
-    public Map<String, Map<String, Integer>> getModuleInstanceCount() {
-        return moduleInstanceCount;
-    }
-
-    public void setModuleInstanceCount(
-            Map<String, Map<String, Integer>> moduleInstanceCount) {
-        this.moduleInstanceCount = moduleInstanceCount;
-    }
-
-    public List<String> getPlacedAppModulesPerApplication(String appId) {
-        return appToModulesMap.get(appId);
-    }
-
-    public void removeChild(int childId) {
-        // TODO Auto-generated method stub
-        @SuppressWarnings("deprecation")
-        Integer childIDobject = new Integer(childId);
-        if (getChildrenIds().contains(childId) && childId != getId())
-            getChildrenIds().remove(childIDobject);
-        if (getChildToOperatorsMap().containsKey(childId)) {
-            List<String> operatorName = getChildToOperatorsMap().get(childId);
-            getChildToOperatorsMap().remove(childId, operatorName);
-        }
-    }
-
-    public void setClusterMembers(List clusterList) {
-        this.clusterMembers = clusterList;
-    }
-
-    public void addClusterMember(int clusterMemberId) {
-        this.clusterMembers.add(clusterMemberId);
-    }
-
-    public List<Integer> getClusterMembers() {
-        return this.clusterMembers;
-    }
-
-    public void setIsInCluster(Boolean bool) {
-        this.isInCluster = bool;
-    }
-
-    public void setSelfCluster(Boolean bool) {
-        this.selfCluster = bool;
-    }
-
-    public Boolean getIsInCluster() {
-        return this.isInCluster;
-    }
-
-    public Boolean getSelfCluster() {
-        return this.selfCluster;
-    }
-
-    public void setClusterMembersToLatencyMap(Map<Integer, Double> clusterMembersToLatencyMap) {
-        this.clusterMembersToLatencyMap = clusterMembersToLatencyMap;
-    }
-
-    public Map<Integer, Double> getClusterMembersToLatencyMap() {
-        return this.clusterMembersToLatencyMap;
-    }
-
-    protected void processClustering(int parentId, int nodeId, SimEvent ev) {
-        JSONObject objectLocator = (JSONObject) ev.getData();
-        Clustering cms = new Clustering();
-        cms.createClusterMembers(this.getParentId(), this.getId(), objectLocator);
-    }
-
-    public double getClusterLinkBandwidth() {
-        return clusterLinkBandwidth;
-    }
-
-    protected void setClusterLinkBandwidth(double clusterLinkBandwidth) {
-        this.clusterLinkBandwidth = clusterLinkBandwidth;
-    }
-
-    protected void sendToCluster(Tuple tuple, int clusterNodeID) {
-        if (getClusterMembers().contains(clusterNodeID)) {
-            if (!isClusterLinkBusy) {
-                sendThroughFreeClusterLink(tuple, clusterNodeID);
-            } else {
-                clusterTupleQueue.add(new Pair<Tuple, Integer>(tuple, clusterNodeID));
-            }
-        }
-    }
-
-    private void updateClusterTupleQueue() {
-        if (!getClusterTupleQueue().isEmpty()) {
-            Pair<Tuple, Integer> pair = getClusterTupleQueue().poll();
-            sendThroughFreeClusterLink(pair.getFirst(), pair.getSecond());
-        } else {
-            setClusterLinkBusy(false);
-        }
-    }
-
-    private void sendThroughFreeClusterLink(Tuple tuple, Integer clusterNodeID) {
-        double networkDelay = tuple.getCloudletFileSize() / getClusterLinkBandwidth();
-        setClusterLinkBusy(true);
-        double latency = (getClusterMembersToLatencyMap()).get(clusterNodeID);
-        send(getId(), networkDelay, FogEvents.UPDATE_CLUSTER_TUPLE_QUEUE);
-        send(clusterNodeID, networkDelay + latency, FogEvents.TUPLE_ARRIVAL, tuple);
-        NetworkUsageMonitor.sendingTuple(latency, tuple.getCloudletFileSize());
-    }
-
-    protected void setClusterLinkBusy(boolean busy) {
-        this.isClusterLinkBusy = busy;
-    }
-
-    public Queue<Pair<Tuple, Integer>> getClusterTupleQueue() {
-        return clusterTupleQueue;
-    }
-
-
+        if(getName().contains("m"))//如果该雾设备是手机，则不考虑文件传输时间
+			return 0;
+		else
+			return time;
+    }
+
+	protected void processOperatorRelease(SimEvent ev){
+		this.processVmMigrate(ev, false);
+	}
+	
+	public PowerHost getHost(){
+		return (PowerHost) getHostList().get(0);
+	}
+	
+	public PowerHost getHost(int i){
+		return (PowerHost) getHostList().get(i);
+	}
+
+	public int getParentId() {
+		return parentId;
+	}
+	public void setParentId(int parentId) {
+		this.parentId = parentId;
+	}
+	public List<Integer> getChildrenIds() {
+		return childrenIds;
+	}
+	public void setChildrenIds(List<Integer> childrenIds) {
+		this.childrenIds = childrenIds;
+	}
+	public double getUplinkBandwidth() {
+		return uplinkBandwidth;
+	}
+	public void setUplinkBandwidth(double uplinkBandwidth) {
+		this.uplinkBandwidth = uplinkBandwidth;
+	}
+	public double getUplinkLatency() {
+		return uplinkLatency;
+	}
+	public void setUplinkLatency(double uplinkLatency) {
+		this.uplinkLatency = uplinkLatency;
+	}
+	public int getControllerId() {
+		return controllerId;
+	}
+	public void setControllerId(int controllerId) {
+		this.controllerId = controllerId;
+	}
+	
+	public double getDownlinkBandwidth() {
+		return downlinkBandwidth;
+	}
+
+	public void setDownlinkBandwidth(double downlinkBandwidth) {
+		this.downlinkBandwidth = downlinkBandwidth;
+	}
+	
+	public double getEnergyConsumption() {
+		return energyConsumption;
+	}
+
+	public void setEnergyConsumption(double energyConsumption) {
+		this.energyConsumption = energyConsumption;
+	}
+	
+	public int getLevel() {
+		return level;
+	}
+
+	public void setLevel(int level) {
+		this.level = level;
+	}
+
+	public double getRatePerMips() {
+		return ratePerMips;
+	}
+
+	public void setRatePerMips(double ratePerMips) {
+		this.ratePerMips = ratePerMips;
+	}
+	public double getTotalCost() {
+		return totalCost;
+	}
+
+	public void setTotalCost(double totalCost) {
+		this.totalCost = totalCost;
+	}
+	
+	public double getExecutionTime() {
+		return ExecutionTime;
+	}
+
+	public void setExecutionTime(double ExecutionTime) {
+		this.ExecutionTime = ExecutionTime;
+	}
+
+	public void clear() throws Throwable {
+		// TODO Auto-generated method stub
+		this.finalize();
+		this.ExecutionTime=0;
+		this.getVmList().clear();
+		this.getHostList().clear();
+	}
+	
+	protected void clearVmProcessing(SimEvent ev) {
+		// TODO Auto-generated method stub
+		setLastProcessTime(0.1);
+		List<? extends Host> list = getVmAllocationPolicy().getHostList();
+		for (Host host : list) {
+            double time = host.updateVmsProcessing(CloudSim.clock());
+		}
+	}
+
+	public void clearConsumption() {
+		setEnergyConsumption(0);
+		setTotalCost(0);
+		setExecutionTime(0.0);
+		List<PowerHost> hostlist = getHostList();
+		for(PowerHost host : hostlist){
+			host.ExecutionTime=0;
+			host.IdleTime=0;
+			host.energyConsumption=0.0;
+			List<CondorVM> vmlist = host.getVmList();
+			for(CondorVM vm : vmlist){
+				vm.IdleTime=0.0;
+				vm.ExecutionTime=0.0;
+			}
+		}
+	}
+	
+	public double getAverageMips(){
+		double total = 0;
+		for(Host host : getHostList())
+			total += host.getTotalMips();
+		return total / getHostList().size();
+	}
 }

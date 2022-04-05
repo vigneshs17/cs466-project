@@ -25,13 +25,13 @@ import org.cloudbus.cloudsim.core.CloudSim;
  */
 public class VmAllocationPolicySimple extends VmAllocationPolicy {
 
-	/** The vm table. */
+	/** The vm table.记录虚拟机被分配到哪台主机 */
 	private Map<String, Host> vmTable;
 
-	/** The used pes. */
+	/** The used pes.记录虚拟机占用了几个处理器核心  */
 	private Map<String, Integer> usedPes;
 
-	/** The free pes. */
+	/** The free pes.记录每台主机可用的处理器核心数 */
 	private List<Integer> freePes;
 
 	/**
@@ -42,14 +42,17 @@ public class VmAllocationPolicySimple extends VmAllocationPolicy {
 	 * @post $none
 	 */
 	public VmAllocationPolicySimple(List<? extends Host> list) {
-		super(list);
+		super(list);//初始化主机列表hostList（继承自父类的成员）  
 
+	    //初始化每台主机可用的处理器核心数freePes  
 		setFreePes(new ArrayList<Integer>());
 		for (Host host : getHostList()) {
 			getFreePes().add(host.getNumberOfPes());
 
 		}
+		//System.out.println("VmAllocationPolicySimple.getFreePes.size:"+getFreePes().size());
 
+		//初始化vmTable和usedPes  
 		setVmTable(new HashMap<String, Host>());
 		setUsedPes(new HashMap<String, Integer>());
 	}
@@ -64,20 +67,21 @@ public class VmAllocationPolicySimple extends VmAllocationPolicy {
 	 */
 	@Override
 	public boolean allocateHostForVm(Vm vm) {
-		int requiredPes = vm.getNumberOfPes();
+		int requiredPes = vm.getNumberOfPes();//创建vm所需的处理器核心数
 		boolean result = false;
-		int tries = 0;
+		int tries = 0; //尝试次数 
 		List<Integer> freePesTmp = new ArrayList<Integer>();
 		for (Integer freePes : getFreePes()) {
 			freePesTmp.add(freePes);
 		}
 
+		//如果当前虚拟机还未创建  
 		if (!getVmTable().containsKey(vm.getUid())) { // if this vm was not created
-			do {// we still trying until we find a host or until we try all of them
-				int moreFree = Integer.MIN_VALUE;
-				int idx = -1;
+			do {// we still trying until we find a host or until we try all of them 尝试创建虚拟机直到创建成功或所有的主机都已经尝试过  
+				int moreFree = Integer.MIN_VALUE;//当前最大可用核心数 
+				int idx = -1;//当前最大可用核心数对应主机的下标
 
-				// we want the host with less pes in use
+				// we want the host with less pes in use 找到可用处理器核心数最大的第一台主机
 				for (int i = 0; i < freePesTmp.size(); i++) {
 					if (freePesTmp.get(i) > moreFree) {
 						moreFree = freePesTmp.get(i);
@@ -86,15 +90,17 @@ public class VmAllocationPolicySimple extends VmAllocationPolicy {
 				}
 
 				Host host = getHostList().get(idx);
-				result = host.vmCreate(vm);
+				result = host.vmCreate(vm); //尝试创建虚拟机
 
-				if (result) { // if vm were succesfully created in the host
+				if (result) { // if vm were succesfully created in the host  如果虚拟机创建成功  
+					//更新映射关系及主机可用的处理器核心数 
 					getVmTable().put(vm.getUid(), host);
 					getUsedPes().put(vm.getUid(), requiredPes);
 					getFreePes().set(idx, getFreePes().get(idx) - requiredPes);
 					result = true;
 					break;
-				} else {
+				} else {//如果创建失败  
+					//将当前主机的可用处理器核心数暂时设成最小值，从而排除该主机
 					freePesTmp.set(idx, Integer.MIN_VALUE);
 				}
 				tries++;
@@ -114,6 +120,7 @@ public class VmAllocationPolicySimple extends VmAllocationPolicy {
 	 */
 	@Override
 	public void deallocateHostForVm(Vm vm) {
+		//删除虚拟机相应的映射关系，通过主机销毁虚拟机并更新可用的处理器核心数
 		Host host = getVmTable().remove(vm.getUid());
 		int idx = getHostList().indexOf(host);
 		int pes = getUsedPes().remove(vm.getUid());
@@ -220,8 +227,9 @@ public class VmAllocationPolicySimple extends VmAllocationPolicy {
 	 * org.cloudbus.cloudsim.Host)
 	 */
 	@Override
+	//将虚拟机分配给指定的主机 
 	public boolean allocateHostForVm(Vm vm, Host host) {
-		if (host.vmCreate(vm)) { // if vm has been succesfully created in the host
+		if (host.vmCreate(vm)) { // if vm has been succesfully created in the host 如果虚拟机创建成功，更新vmTable，并返回true
 			getVmTable().put(vm.getUid(), host);
 
 			int requiredPes = vm.getNumberOfPes();
